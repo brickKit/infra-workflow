@@ -21,8 +21,8 @@ paths:
         前缀）——只看得到指派给自己、或指派给自己下属部门某人的待办。
       operationId: listTasks
       parameters:
-        - { name: type,   in: query, schema: { type: string, enum: [approval, exception] } }
-        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, resolved, cancelled] } }
+        - { name: type,   in: query, schema: { type: string, enum: [APPROVAL, EXCEPTION] } }
+        - { name: status, in: query, schema: { type: string, enum: [PENDING, APPROVED, REJECTED, RESOLVED, CANCELLED] } }
         - { name: cursor,    in: query, schema: { type: string } }
         - { name: page_size, in: query, schema: { type: integer } }
       responses:
@@ -111,8 +111,8 @@ paths:
         明文）。
       operationId: adminListTasks
       parameters:
-        - { name: type,   in: query, schema: { type: string, enum: [approval, exception] } }
-        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, resolved, cancelled] } }
+        - { name: type,   in: query, schema: { type: string, enum: [APPROVAL, EXCEPTION] } }
+        - { name: status, in: query, schema: { type: string, enum: [PENDING, APPROVED, REJECTED, RESOLVED, CANCELLED] } }
         - { name: assignee_sub, in: query, schema: { type: string } }
         - { name: cursor,    in: query, schema: { type: string } }
         - { name: page_size, in: query, schema: { type: integer } }
@@ -129,8 +129,8 @@ components:
       type: object
       properties:
         id: { type: string }
-        type: { type: string, enum: [approval, exception] }
-        status: { type: string, enum: [pending, approved, rejected, resolved, cancelled] }
+        type: { type: string, enum: [APPROVAL, EXCEPTION] }
+        status: { type: string, enum: [PENDING, APPROVED, REJECTED, RESOLVED, CANCELLED] }
         assignee_sub: { type: string }
         assignee_dept_path: { type: string }
         title: { type: string }
@@ -147,7 +147,7 @@ components:
       type: object
       properties:
         actor_sub: { type: string }
-        action: { type: string, enum: [approved, rejected, closed, cancelled] }
+        action: { type: string, enum: [APPROVED, REJECTED, CLOSED, CANCELLED] }
         comment: { type: string }
         created_at: { type: string, format: date-time }
 

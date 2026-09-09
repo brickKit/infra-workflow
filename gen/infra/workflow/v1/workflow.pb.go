@@ -146,11 +146,14 @@ type Task struct {
 	SourceId        string                 `protobuf:"bytes,10,opt,name=source_id,json=sourceId,proto3" json:"source_id,omitempty"`                     // 如订单 id
 	DeepLink        string                 `protobuf:"bytes,11,opt,name=deep_link,json=deepLink,proto3" json:"deep_link,omitempty"`                     // 业务组件给出的前端路由，本组件原样存原样渲染（设计计划 §9 第 3 条）
 	DueAt           *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=due_at,json=dueAt,proto3" json:"due_at,omitempty"`                              // 未设置表示无截止时间（设计计划 §2：Odoo mail.activity 的 date_deadline 一等字段）
-	IdempotencyKey  string                 `protobuf:"bytes,13,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt       *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// ⚠️ 字段号 13 刻意留空不用——idempotency_key 只是命令的输入回执
+	// （command_idempotency 表的主键），不是待办这个资源本身的持久属性，
+	// 同 erp-inventory 的既有判据：Movement 一类的资源消息里也不放这个
+	// 字段，只有 CreateTaskRequest 这类命令请求消息才有。
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,15,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Task) Reset() {
@@ -265,13 +268,6 @@ func (x *Task) GetDueAt() *timestamppb.Timestamp {
 		return x.DueAt
 	}
 	return nil
-}
-
-func (x *Task) GetIdempotencyKey() string {
-	if x != nil {
-		return x.IdempotencyKey
-	}
-	return ""
 }
 
 func (x *Task) GetCreatedAt() *timestamppb.Timestamp {
@@ -413,10 +409,16 @@ func (x *CreateTaskRequest) GetDueAt() *timestamppb.Timestamp {
 }
 
 type CloseTaskRequest struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	IdempotencyKey string                 `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
-	TaskId         string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"` // 二选一：有 task_id 用它，没有就靠 idempotency_key 反查（同 GetTaskStatus 的判据）
-	Comment        string                 `protobuf:"bytes,3,opt,name=comment,proto3" json:"comment,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// ⚠️ idempotency_key 只保证"这条 CloseTask 命令本身重放安全"，不用来
+	// 反查该关哪个任务——task_id 必须由调用方从当初 CreateTask 的返回值
+	// 里带过来（同 erp-inventory 的 CancelReservation：调用方存着
+	// reservation_id，idempotency_key 只管这一次撤销命令的幂等）。
+	// GetTaskStatus 的"二选一"解决的是完全不同的问题（超时时连 task_id
+	// 都还没拿到），这里不适用。
+	IdempotencyKey string `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
+	TaskId         string `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Comment        string `protobuf:"bytes,3,opt,name=comment,proto3" json:"comment,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -947,7 +949,7 @@ var File_infra_workflow_v1_workflow_proto protoreflect.FileDescriptor
 
 const file_infra_workflow_v1_workflow_proto_rawDesc = "" +
 	"\n" +
-	" infra/workflow/v1/workflow.proto\x12\x11infra.workflow.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xea\x04\n" +
+	" infra/workflow/v1/workflow.proto\x12\x11infra.workflow.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xc1\x04\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12/\n" +
 	"\x04type\x18\x02 \x01(\x0e2\x1b.infra.workflow.v1.TaskTypeR\x04type\x125\n" +
@@ -961,8 +963,7 @@ const file_infra_workflow_v1_workflow_proto_rawDesc = "" +
 	"\tsource_id\x18\n" +
 	" \x01(\tR\bsourceId\x12\x1b\n" +
 	"\tdeep_link\x18\v \x01(\tR\bdeepLink\x121\n" +
-	"\x06due_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x05dueAt\x12'\n" +
-	"\x0fidempotency_key\x18\r \x01(\tR\x0eidempotencyKey\x129\n" +
+	"\x06due_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x05dueAt\x129\n" +
 	"\n" +
 	"created_at\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +

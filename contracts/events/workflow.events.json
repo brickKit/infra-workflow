@@ -27,7 +27,7 @@
           "task_id":           { "type": "string" },
           "assignee_sub":      { "type": "string" },
           "title":             { "type": "string" },
-          "type":              { "type": "string", "enum": ["approval", "exception"] },
+          "type":              { "type": "string", "enum": ["APPROVAL", "EXCEPTION"] },
           "source_component":  { "type": "string" },
           "source_aggregate":  { "type": "string" },
           "source_id":         { "type": "string" }
@@ -43,7 +43,7 @@
         "required": ["task_id", "action", "source_component", "source_aggregate", "source_id"],
         "properties": {
           "task_id":          { "type": "string" },
-          "action":           { "type": "string", "enum": ["approved", "rejected", "resolved"] },
+          "action":           { "type": "string", "enum": ["APPROVED", "REJECTED", "RESOLVED"] },
           "actor_sub":        { "type": "string", "description": "谁做的这个动作；resolved（exception 被 CloseTask 关闭）时是发起 CloseTask 调用的业务组件，没有真实用户，留空" },
           "comment":          { "type": "string" },
           "source_component": { "type": "string" },

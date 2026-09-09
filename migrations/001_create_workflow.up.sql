@@ -12,7 +12,6 @@
 -- 补的，不是可选装饰——见设计计划 §2 的 ⭐ 警告。
 CREATE TABLE workflow_tasks (
     id                 BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    idempotency_key    TEXT        NOT NULL,
     type               TEXT        NOT NULL CHECK (type IN ('APPROVAL', 'EXCEPTION')),
     status             TEXT        NOT NULL DEFAULT 'PENDING'
                                     CHECK (status IN ('PENDING', 'APPROVED', 'REJECTED', 'RESOLVED', 'CANCELLED')),
@@ -32,12 +31,13 @@ CREATE TABLE workflow_tasks (
     deep_link          TEXT        NOT NULL DEFAULT '',
     due_at             TIMESTAMPTZ,
     overdue_notified_at TIMESTAMPTZ, -- 超期事件只发一次的去重标记，见 backend/internal/service 的超期扫描
+    -- 每次状态流转 +1，同时充当事件信封的 version（同 mdm-customer 的
+    -- 既有判据：aggregate 自己的乐观锁版本号直接复用成事件 version，
+    -- 不另起一套编号）。
+    version            INT         NOT NULL DEFAULT 1,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- CreateTask 的幂等靠这一条唯一约束 + claim-first INSERT ... ON CONFLICT
--- DO NOTHING（设计计划 §3.1，同 erp-inventory 的既有先例）。
-CREATE UNIQUE INDEX workflow_tasks_idempotency_key_idx ON workflow_tasks (idempotency_key);
 -- 数据权限两维：owner=assignee_sub（等值），org=assignee_dept_path（前缀）。
 CREATE INDEX workflow_tasks_assignee_sub_idx ON workflow_tasks (assignee_sub);
 CREATE INDEX workflow_tasks_assignee_dept_path_idx ON workflow_tasks (assignee_dept_path text_pattern_ops);
@@ -61,13 +61,16 @@ CREATE TABLE workflow_task_actions (
 );
 CREATE INDEX workflow_task_actions_task_id_idx ON workflow_task_actions (task_id, created_at);
 
--- command_idempotency：CloseTask/CancelTask 两个"更新既有资源"的命令
--- 用（CreateTask 的幂等已经靠 workflow_tasks.idempotency_key 解决，
--- 不需要在这里重复登记——同 erp-finance 的既有区分：建资源型命令的
--- 幂等落在资源表自己的唯一约束上，更新型命令的幂等落在这张表）。
+-- command_idempotency：三个写命令（CreateTask/CloseTask/CancelTask）
+-- 统一走这张表的 claim-first 模式（同 erp-inventory 的既有先例：
+-- claimIdempotency 先 INSERT ... ON CONFLICT DO NOTHING 声明，声明
+-- 成功才做真正的写，写完把 result_id 落回这一行；没声明成功就直接
+-- 按 idempotency_key 查 result_id 返回，同一个命令重放多少次都是这
+-- 一条逻辑）。⚠️ workflow_tasks 表本身不重复存 idempotency_key——
+-- 那不是待办这个资源的持久属性，是命令的输入回执，只属于这张表。
 CREATE TABLE command_idempotency (
     idempotency_key TEXT        PRIMARY KEY,
     command         TEXT        NOT NULL,
-    result_id       TEXT        NOT NULL, -- 该命令作用的 task_id
+    result_id       TEXT        NOT NULL DEFAULT '', -- 该命令作用/产生的 task_id，声明阶段先留空
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

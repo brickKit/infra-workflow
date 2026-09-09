@@ -41,8 +41,12 @@ service WorkflowService {
   // BatchGetTasks 是防 N+1 的唯一合法批量读方式（§3.8）。
   rpc BatchGetTasks(BatchGetTasksRequest) returns (BatchGetTasksResponse);
 
-  // ListTasks 按 assignee/状态/来源筛，走 ScopeFilter（数据权限在服务端
-  // 从已验签的 JWT claims 推导，不由调用方在请求里指定）。
+  // ListTasks 按状态/类型/来源筛。⚠️ 同 BatchGetTasks/GetTaskStatus——这
+  // 是组件间协议，不经过 besdk.RequirePermission，ctx 里没有已验签的
+  // Claims（本项目目前没有任何组件在 gRPC 侧转发/验证 JWT，见
+  // BatchGetBalance 一类的既有判据），因此不做数据权限过滤，见的是全部
+  // 待办。人类操作的"我的待办"/"全局待办视图"两个数据权限维度只在 REST
+  // 面生效（backend/internal/http，走 besdk.ScopeOf(ctx)）。
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
 }
 
@@ -77,7 +81,10 @@ message Task {
   string source_id = 10;           // 如订单 id
   string deep_link = 11;           // 业务组件给出的前端路由，本组件原样存原样渲染（设计计划 §9 第 3 条）
   google.protobuf.Timestamp due_at = 12;      // 未设置表示无截止时间（设计计划 §2：Odoo mail.activity 的 date_deadline 一等字段）
-  string idempotency_key = 13;
+  // ⚠️ 字段号 13 刻意留空不用——idempotency_key 只是命令的输入回执
+  // （command_idempotency 表的主键），不是待办这个资源本身的持久属性，
+  // 同 erp-inventory 的既有判据：Movement 一类的资源消息里也不放这个
+  // 字段，只有 CreateTaskRequest 这类命令请求消息才有。
   google.protobuf.Timestamp created_at = 14;
   google.protobuf.Timestamp updated_at = 15;
 }
@@ -97,8 +104,14 @@ message CreateTaskRequest {
 }
 
 message CloseTaskRequest {
+  // ⚠️ idempotency_key 只保证"这条 CloseTask 命令本身重放安全"，不用来
+  // 反查该关哪个任务——task_id 必须由调用方从当初 CreateTask 的返回值
+  // 里带过来（同 erp-inventory 的 CancelReservation：调用方存着
+  // reservation_id，idempotency_key 只管这一次撤销命令的幂等）。
+  // GetTaskStatus 的"二选一"解决的是完全不同的问题（超时时连 task_id
+  // 都还没拿到），这里不适用。
   string idempotency_key = 1;
-  string task_id = 2;      // 二选一：有 task_id 用它，没有就靠 idempotency_key 反查（同 GetTaskStatus 的判据）
+  string task_id = 2;
   string comment = 3;
 }
 
