@@ -1,0 +1,169 @@
+openapi: 3.0.3
+info:
+  title: infra-workflow · 审批待办中心
+  version: 1.0.0
+  description: |
+    对外 REST 面，路径统一挂在 `/infra/workflow/**` 前缀下（标准形状，
+    见总纲 §2.1）。
+
+    ⚠️ `CreateTask`/`CloseTask`/`CancelTask` 三个命令**不出现在这份契约
+    里**——它们只走 gRPC（`contracts/infra/workflow/v1/workflow.proto`），
+    是组件间协议，不是人类操作。人能创建待办只有一种可能："人代表某个
+    业务组件创建"，那等于给了一条绕过业务规则的路（设计计划 §3 明文
+    警告）。
+
+paths:
+  /infra/workflow/tasks:
+    get:
+      summary: 我的待办列表
+      description: |
+        数据权限两维在这里生效（owner=assignee_sub，org=assignee_dept_path
+        前缀）——只看得到指派给自己、或指派给自己下属部门某人的待办。
+      operationId: listTasks
+      parameters:
+        - { name: type,   in: query, schema: { type: string, enum: [approval, exception] } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, resolved, cancelled] } }
+        - { name: cursor,    in: query, schema: { type: string } }
+        - { name: page_size, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskListResponse" }
+
+  /infra/workflow/tasks/{id}:
+    get:
+      summary: 待办详情 + 审批历史
+      operationId: getTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDetail" }
+        "403":
+          description: 不在自己的数据范围内（owner/org 两维都不匹配）
+        "404":
+          description: 待办不存在
+
+  /infra/workflow/tasks/{id}/approve:
+    post:
+      summary: 同意
+      description: |
+        `approval` 与 `exception` 两类任务都能调这个端点——本组件不区分
+        任务类型来决定动作是否合法，"同意"对 `exception` 任务的业务含义
+        （比如"确认已经人工处理完毕"）由创建它的业务组件自己解释
+        （设计计划 §6.6 铁律一：判定权不在这里）。
+      operationId: approveTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDetail" }
+        "409":
+          description: 待办已经不是 PENDING 状态
+
+  /infra/workflow/tasks/{id}/reject:
+    post:
+      summary: 驳回（必须带附言）
+      operationId: rejectTask
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [comment]
+              properties:
+                comment: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskDetail" }
+        "400":
+          description: 缺少附言
+        "409":
+          description: 待办已经不是 PENDING 状态
+
+  /infra/workflow/admin/tasks:
+    get:
+      summary: 全局待办视图
+      description: |
+        绕过 owner 维（能看到不是指派给自己的待办）但**不绕过 org 维**——
+        管理员看的是"本组织范围内的全部待办"，不是全租户（设计计划 §3
+        明文）。
+      operationId: adminListTasks
+      parameters:
+        - { name: type,   in: query, schema: { type: string, enum: [approval, exception] } }
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, rejected, resolved, cancelled] } }
+        - { name: assignee_sub, in: query, schema: { type: string } }
+        - { name: cursor,    in: query, schema: { type: string } }
+        - { name: page_size, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TaskListResponse" }
+
+components:
+  schemas:
+    Task:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, enum: [approval, exception] }
+        status: { type: string, enum: [pending, approved, rejected, resolved, cancelled] }
+        assignee_sub: { type: string }
+        assignee_dept_path: { type: string }
+        title: { type: string }
+        summary: { type: object, description: "调用方在 CreateTask 时传入的展示快照，原样透传" }
+        source_component: { type: string }
+        source_aggregate: { type: string }
+        source_id: { type: string }
+        deep_link: { type: string }
+        due_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    TaskAction:
+      type: object
+      properties:
+        actor_sub: { type: string }
+        action: { type: string, enum: [approved, rejected, closed, cancelled] }
+        comment: { type: string }
+        created_at: { type: string, format: date-time }
+
+    TaskDetail:
+      allOf:
+        - $ref: "#/components/schemas/Task"
+        - type: object
+          properties:
+            actions:
+              type: array
+              items: { $ref: "#/components/schemas/TaskAction" }
+
+    TaskListResponse:
+      type: object
+      properties:
+        tasks:
+          type: array
+          items: { $ref: "#/components/schemas/Task" }
+        next_cursor: { type: string }

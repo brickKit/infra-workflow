@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "infra-workflow 事件清单",
+  "note": "Schema 演进铁律：只增不删不改（决策 19）。消费者宽容反序列化。⚠️ 三条全部标核心不标旁路的那三条（created/completed/cancelled）：漏一条 completed 的后果是业务单据永远停在'审批中'且没有任何报错——审批的人明明点了同意，单子就是不动（设计计划 §4）。本组件不消费任何事件（一条都不），见设计计划 §4 消费表与 §6.6 铁律三。",
+  "envelope": {
+    "description": "所有事件共用的信封。三个 Header 字段由 be-sdk 自动填/校验（§3.10）",
+    "required": ["subject", "aggregate_id", "version", "trace_id", "causation_id", "hop_count", "occurred_at"],
+    "properties": {
+      "subject":      { "type": "string", "pattern": "^[a-z]+\\.[a-z-]+\\.[a-z-]+\\.v[0-9]+$" },
+      "aggregate_id": { "type": "string" },
+      "version":      { "type": "integer", "description": "消费者只在严格大于本地当前值时更新（决策 43）" },
+      "trace_id":     { "type": "string" },
+      "causation_id": { "type": "string" },
+      "hop_count":    { "type": "integer", "maximum": 5, "description": "> 5 直接丢弃进 DLQ（决策 42）" },
+      "occurred_at":  { "type": "string", "format": "date-time" }
+    }
+  },
+  "events": [
+    {
+      "subject": "infra.workflow.task.created.v1",
+      "grade": "core",
+      "note": "待办登记成功时发。aggregate_id 是 task_id。infra-notification 靠它触发通知。",
+      "payload": {
+        "type": "object",
+        "required": ["task_id", "assignee_sub", "type"],
+        "properties": {
+          "task_id":           { "type": "string" },
+          "assignee_sub":      { "type": "string" },
+          "title":             { "type": "string" },
+          "type":              { "type": "string", "enum": ["approval", "exception"] },
+          "source_component":  { "type": "string" },
+          "source_aggregate":  { "type": "string" },
+          "source_id":         { "type": "string" }
+        }
+      }
+    },
+    {
+      "subject": "infra.workflow.task.completed.v1",
+      "grade": "core",
+      "note": "审批完成（同意/驳回）或 exception 被 CloseTask 关闭时发。⭐ 这是本组件回话给业务组件的唯一通道（设计计划 §1.1、§4）——业务组件据此决定自己那张单据接下来该怎么变，本组件不知道也不该知道。",
+      "payload": {
+        "type": "object",
+        "required": ["task_id", "action", "source_component", "source_aggregate", "source_id"],
+        "properties": {
+          "task_id":          { "type": "string" },
+          "action":           { "type": "string", "enum": ["approved", "rejected", "resolved"] },
+          "actor_sub":        { "type": "string", "description": "谁做的这个动作；resolved（exception 被 CloseTask 关闭）时是发起 CloseTask 调用的业务组件，没有真实用户，留空" },
+          "comment":          { "type": "string" },
+          "source_component": { "type": "string" },
+          "source_aggregate": { "type": "string" },
+          "source_id":        { "type": "string" }
+        }
+      }
+    },
+    {
+      "subject": "infra.workflow.task.cancelled.v1",
+      "grade": "core",
+      "note": "来源单据作废、业务组件调 CancelTask 时发。",
+      "payload": {
+        "type": "object",
+        "required": ["task_id", "source_component", "source_aggregate", "source_id"],
+        "properties": {
+          "task_id":          { "type": "string" },
+          "reason":           { "type": "string" },
+          "source_component": { "type": "string" },
+          "source_aggregate": { "type": "string" },
+          "source_id":        { "type": "string" }
+        }
+      }
+    },
+    {
+      "subject": "infra.workflow.task.overdue.v1",
+      "grade": "peripheral",
+      "note": "due_at 到点仍是 PENDING 时发。本组件只报告'超期了'，怎么处理（升级/催办/自动通过）归业务组件或通知中心，不归本组件（设计计划 §2、§6.6 铁律一）。",
+      "payload": {
+        "type": "object",
+        "required": ["task_id", "assignee_sub", "due_at"],
+        "properties": {
+          "task_id":     { "type": "string" },
+          "assignee_sub":{ "type": "string" },
+          "due_at":      { "type": "string", "format": "date-time" }
+        }
+      }
+    }
+  ]
+}

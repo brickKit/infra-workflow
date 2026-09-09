@@ -1,0 +1,73 @@
+apiVersion: brickkit/v1
+kind: Component
+
+metadata:
+  id: infra/workflow                  # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
+  name: 审批待办中心
+  version: 1.0.0                      # 精确版本，不接受 ^ / ~ / latest
+  description: 轻量待办箱——接收业务组件登记的审批/异常任务，维护待办列表与审批历史，完成后发事件回话。三条铁律：不判业务规则、不查业务库、不反向调用业务组件（设计书 §6.6）
+  license: Apache-2.0
+  vendor: brickKit
+
+tags: [infra, workflow, approval]
+
+artifacts:
+  - type: api-contract
+    format: protobuf
+    files:
+      - contracts/infra/workflow/v1/workflow.proto
+      - contracts/events/workflow.events.json
+  - type: api-contract
+    format: openapi
+    files: [contracts/workflow.openapi.yaml]
+  - type: metadata                    # ← assembly.yaml 靠这一条随组件分发（§3.5）
+    files: [assembly.yaml]
+
+# ⚠️ 零强依赖零弱依赖——本组件在同步图上只有入边（设计计划 §5、§6）。
+# 谁调我、我发什么事件都不构成依赖边；"严禁反向同步调用业务组件"
+# （§6.6 铁律三）意味着这里永远不会多出一条边。
+dependencies:
+  components: []
+  resources:
+    # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
+    #    brickkit.yaml 的 resources[].engine 完全相同，平台不认别名。
+    - { kind: database, engine: postgresql }
+    - { kind: mq,       engine: nats }         # 发 infra.workflow.task.*.v1
+
+configSchema:
+  type: object
+  properties:
+    pgSchema:                         # ⚠️ 不能叫 databaseSchema，DATABASE_ 是保留前缀
+      type: string
+      default: infra_workflow
+    otelBaseUrl:                      # ⚠️ 不能叫 otelEndpoint，*_ENDPOINT 是保留后缀
+      type: string
+      default: ""                     # 空 → Blackhole Exporter，零成本（§7.5）
+    iamJwksUrl:                       # JWT 本地验签的公钥来源——指向 infra-iam-casdoor，
+      type: string                    # 不是本组件自己（本组件不签发 token，只验签）
+      default: ""
+    authzBundleUrl:                   # 权限判定的 bundle 轮询地址——指向 infra-authz
+      type: string
+      default: ""
+
+deployment:
+  type: container
+  image: brickenterprise/infra-workflow:1.0.0
+  port: 8201                          # 端口册 registry/ports.tsv
+  extraPorts:
+    - { name: grpc, port: 9201 }      # → INFRA_WORKFLOW_GRPC_ENDPOINT（值仍以 http:// 开头）
+  labels:                             # 平台只搬运，不解释键值。值必须是字符串
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8201"
+    prometheus.io/path: "/metrics"
+  resources:
+    requests: { cpu: "150m", memory: "192Mi" }
+
+migration:
+  command: ["./migrate", "up"]
+
+healthCheck:
+  type: http
+  path: /healthz                      # ⚠️ 只查本进程存活，严禁查库、查 infra-authz、查依赖方（§12.3.6）
+  # startPeriodSeconds 不写：默认就是 60，Go 组件够用（§12.3.5）
+

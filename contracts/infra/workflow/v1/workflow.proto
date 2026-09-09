@@ -1,0 +1,151 @@
+syntax = "proto3";
+
+package infra.workflow.v1;
+
+option go_package = "github.com/brickKit/infra-workflow/gen/infra/workflow/v1;workflowv1";
+
+import "google/protobuf/timestamp.proto";
+
+// WorkflowService 是 infra-workflow 的 gRPC 面（设计计划 §3）。
+//
+// ⚠️ 三条铁律（设计书 §6.6，本组件存在的设计前提，不是软约束）：
+// 严禁包含业务规则判断、严禁直接查询业务数据库、严禁反向同步调用业务
+// 组件。CreateTask/CloseTask/CancelTask 三个命令**不暴露到 REST**——
+// 它们是组件间协议，不是人类操作；人能创建待办只有一种可能
+// "人代表某个业务组件创建"，那等于给了一条绕过业务规则的路（openapi
+// 契约同一处有相同的警告）。
+service WorkflowService {
+  // CreateTask 登记一条待办——幂等键 idempotency_key（claim-first：先
+  // INSERT ... ON CONFLICT DO NOTHING 声明，声明成功才做真正的写，设计
+  // 计划 §3.1，同 erp-inventory 的既有先例）。
+  rpc CreateTask(CreateTaskRequest) returns (Task);
+
+  // CloseTask 由业务组件主动关闭——exception 任务"人在业务界面改好数据、
+  // 重新提交成功"之后调这个，不是本组件自己判断该不该关（设计计划
+  // §1.1）。⚠️ 包一层 CloseTaskResponse 而不是直接返回 Task——buf lint
+  // 的 STANDARD 规则不允许同一个消息类型被多个 rpc 当返回值用，
+  // CreateTask 已经占了 Task 这个"读接口直接返回聚合根本身"的名额。
+  rpc CloseTask(CloseTaskRequest) returns (CloseTaskResponse);
+
+  // CancelTask：来源单据作废，待办跟着作废——同样由业务组件显式调用，
+  // 本组件不监听任何业务事件去猜（设计计划 §4 消费表：一条都不消费）。
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+
+  // GetTaskStatus ⭐ 必须同时支持按 task_id 或 idempotency_key 查——
+  // 超时恰恰是唯一拿不到 task_id 的场景，那时调用方手里只有自己生成的
+  // idempotency_key（设计计划 §3.1，erp-inventory 阶段二用真机故障注入
+  // 测试换来的教训）。NOT_FOUND 与 CANCELLED 不许合并成一个"没有"：
+  // 前者说明请求根本没到（可安全重试），后者说明已被作废（重试是错的）。
+  rpc GetTaskStatus(GetTaskStatusRequest) returns (TaskStatusResponse);
+
+  // BatchGetTasks 是防 N+1 的唯一合法批量读方式（§3.8）。
+  rpc BatchGetTasks(BatchGetTasksRequest) returns (BatchGetTasksResponse);
+
+  // ListTasks 按 assignee/状态/来源筛，走 ScopeFilter（数据权限在服务端
+  // 从已验签的 JWT claims 推导，不由调用方在请求里指定）。
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+}
+
+enum TaskType {
+  TASK_TYPE_UNSPECIFIED = 0;
+  TASK_TYPE_APPROVAL = 1;   // 要人做决定：同意/驳回
+  TASK_TYPE_EXCEPTION = 2;  // 要人去改数据，不给"重试"按钮（设计计划 §1.1）
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_APPROVED = 2;
+  TASK_STATUS_REJECTED = 3;
+  TASK_STATUS_RESOLVED = 4;   // exception 任务被 CloseTask 关闭
+  TASK_STATUS_CANCELLED = 5;
+}
+
+// Task 是待办主体，读接口直接返回它本身（不额外包一层 XxxResponse——
+// 本项目契约的一贯风格，buf lint 已豁免 RPC_RESPONSE_STANDARD_NAME）。
+message Task {
+  string id = 1;
+  TaskType type = 2;
+  TaskStatus status = 3;
+  string assignee_sub = 4;         // 被指派人的 sub（数据权限 owner 维用它）
+  string assignee_dept_path = 5;   // 被指派人的部门路径（数据权限 org 维用它，设计计划 §2 的 ⚠️）
+  string title = 6;
+  string summary_json = 7;         // 展示快照，调用方在 CreateTask 时传入的原始 JSON（设计计划 §1.2 第三行）
+  // 来源四元组：这条待办是哪个业务组件的哪张单据产生的。
+  string source_component = 8;     // 如 "erp/sales"
+  string source_aggregate = 9;     // 如 "sales_order"
+  string source_id = 10;           // 如订单 id
+  string deep_link = 11;           // 业务组件给出的前端路由，本组件原样存原样渲染（设计计划 §9 第 3 条）
+  google.protobuf.Timestamp due_at = 12;      // 未设置表示无截止时间（设计计划 §2：Odoo mail.activity 的 date_deadline 一等字段）
+  string idempotency_key = 13;
+  google.protobuf.Timestamp created_at = 14;
+  google.protobuf.Timestamp updated_at = 15;
+}
+
+message CreateTaskRequest {
+  string idempotency_key = 1;
+  TaskType type = 2;
+  string assignee_sub = 3;
+  string assignee_dept_path = 4;
+  string title = 5;
+  string summary_json = 6;
+  string source_component = 7;
+  string source_aggregate = 8;
+  string source_id = 9;
+  string deep_link = 10;
+  google.protobuf.Timestamp due_at = 11;
+}
+
+message CloseTaskRequest {
+  string idempotency_key = 1;
+  string task_id = 2;      // 二选一：有 task_id 用它，没有就靠 idempotency_key 反查（同 GetTaskStatus 的判据）
+  string comment = 3;
+}
+
+message CloseTaskResponse {
+  Task task = 1;
+}
+
+message CancelTaskRequest {
+  string idempotency_key = 1;
+  string task_id = 2;
+  string reason = 3;
+}
+
+message CancelTaskResponse {
+  Task task = 1;
+}
+
+message GetTaskStatusRequest {
+  string task_id = 1;         // 二选一
+  string idempotency_key = 2; // 二选一
+}
+
+message TaskStatusResponse {
+  TaskStatus status = 1;
+  string task_id = 2; // ⚠️ 必须回带，即使调用方是用 idempotency_key 查的
+}
+
+message BatchGetTasksRequest {
+  repeated string task_ids = 1;
+}
+
+message BatchGetTasksResponse {
+  // 顺序与 task_ids 一致；查不到的 id 对应位置省略（同 batchGet 惯例）。
+  repeated Task tasks = 1;
+}
+
+message ListTasksRequest {
+  TaskType type = 1;       // 未指定 = 不筛类型
+  TaskStatus status = 2;   // 未指定 = 不筛状态
+  string source_component = 3; // 未指定 = 不筛来源组件
+  // ⚠️ 禁止深 Offset，强制 Cursor Pagination（决策 53）——不给 offset 字段，
+  // 深分页在契约层面就不可表达。
+  string cursor = 4;
+  int32 page_size = 5;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  string next_cursor = 2; // 空字符串表示没有下一页
+}

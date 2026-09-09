@@ -1,0 +1,40 @@
+id: infra/workflow                   # 必须与 component.yaml 一致，be-ops 校验
+version: 1.0.0
+
+asset:
+  source_type: open_standard
+  assembly_role: default
+  contract_lock: strict
+  customization_guide: |
+    审批人来源、待办的展示字段是业务组件自己决定的，本组件不涉及可定制的
+    业务规则——按设计计划 §6.6 的三条铁律，本组件本身没有"客户想要不同
+    实现"的分歧空间（见设计计划 §8 结尾的分歧排查）。
+    metadata.id 与 version 一个字都不能改——改了所有依赖方的
+    INFRA_WORKFLOW_ENDPOINT 会整个消失。
+
+domain: infra
+tier: backend
+
+edge_routes:
+  - { path: /infra/workflow/**, auth: required }
+
+menus:
+  - { key: infra.workflow, title: 我的待办, permission: infra.workflow.task.view }
+
+data:
+  schema: infra_workflow               # registry/schemas.tsv
+  role:   infra_workflow_rw            # 只用于 SET LOCAL ROLE，从不登录，因此不进 brickkit.yaml
+
+# 两维（设计计划 §2）：owner 是"被指派人"，org 是"被指派人的部门"——
+# 待办可见性跟着人走，不跟着单据所属部门走（同一份注释见设计计划的
+# ⚠️ 警告，写反的症状是部门主管看不到下属手上跨部门单据的待办）。
+data_scopes:
+  - { dimension: owner, column: assignee_sub,       mode: equals, tables: [workflow_tasks] }
+  - { dimension: org,   column: assignee_dept_path, mode: prefix, tables: [workflow_tasks] }
+
+permissions:
+  - { key: infra.workflow.task.view, title: 查看我的待办,   type: page   }
+  - { key: infra.workflow.task.act,  title: 处理待办（同意/驳回）, type: action }
+  - { key: infra.workflow.admin,     title: 待办全局视图,     type: page   }
+
+shell: go-infra                       # 合并部署时进外壳三（§13.2、设计计划身份证）
