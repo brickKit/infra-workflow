@@ -57,6 +57,7 @@
 | 对一个已经不是 `PENDING` 的待办再次 approve/reject/close/cancel 时"静默忽略、直接返回成功" | 看起来更"友好"，但 claim-first 已经在更上一层保证了"同一个命令重放"不会走到这里；真的走到这里却状态不对，说明调用方拿错了 `task_id` 或者有并发的另一个动作抢先了，两种情况都值得报错而不是悄悄吞掉。统一策略：一律返回 `ErrNotPending` | `backend/internal/repo/actions.go` 的 `transitionTaskTx` |
 | 超期扫描（`MarkOverdueAndPublish`）顺手把 `status` 也改了（比如自动标记成某种"已超期"状态） | 违反铁律一——本组件只报告"超期了"，怎么处理（升级/催办/自动通过）归业务组件或 `infra-notification`。`PENDING` 待办超期之后仍然是 `PENDING`，只是多了一条 `overdue_notified_at` 标记和一条事件 | `backend/internal/repo/overdue.go` |
 | 给 `workflow_tasks` 加分区 | 待办量级远低于交易流水，但这条判断有前提——客户把审批开到"每单必审"时量级会逼近订单量，见设计计划 §9 第 2 条，实现后要按真实数据复核，不是这里可以随便改的假设 | `docs/design/infra-workflow.md` §9 |
+| 忘记给 `event_outbox` 接周分区维护循环 | **真机发现过的真实缺口**：`event_outbox` 从建仓库起就是分区表（决策 54，跟其余所有组件一样），但最初的 `Module.Start` 只顾着"`workflow_tasks` 不分区不需要维护"，漏了 `event_outbox` **确实**分区、也需要维护——迁移只种了 4 周初始分区，第 5 周起对应日期没有分区，Outbox 写入会报"找不到分区"直接失败，且没有任何清晰指向"分区没建"的报错，所有新的 `task.created/completed/cancelled` 事件都发不出去。已补 `backend/internal/partition`（同 `erp-sales` 复用的同一套判据）并接入 `Start`，真机对运行中的容器验证过确实建出了新分区（阶段三 Task 13 旁路发现并修复，v1.0.0→v1.0.1） | `backend/internal/partition/partition.go`、`backend/module/module.go` |
 
 ## 改代码前的自查
 

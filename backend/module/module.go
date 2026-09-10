@@ -15,6 +15,7 @@ import (
 
 	grpcapi "github.com/brickKit/infra-workflow/backend/internal/grpc"
 	httpapi "github.com/brickKit/infra-workflow/backend/internal/http"
+	"github.com/brickKit/infra-workflow/backend/internal/partition"
 	"github.com/brickKit/infra-workflow/backend/internal/repo"
 	"github.com/brickKit/infra-workflow/backend/internal/service"
 	"github.com/brickKit/infra-workflow/migrations"
@@ -51,14 +52,19 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 
 		Migrations: migrations.FS, // 合并态由外壳按拓扑顺序跑（§13.3 铁律五）
 
-		// 后台循环：Outbox 推送 + 超期扫描。两个循环必须并发跑，不能顺序
-		// 调用——它们各自是阻塞到 ctx 取消才返回的循环。⚠️ 本组件没有
-		// event_inbox（零消费，§6.6 铁律三），不需要消费者循环；也不需要
-		// 分区维护（workflow_tasks 不分区，见设计计划 §9 第 2 条）。
+		// 后台循环：Outbox 推送 + 超期扫描 + event_outbox 周分区维护。三个
+		// 循环必须并发跑，不能顺序调用——它们各自是阻塞到 ctx 取消才返回
+		// 的循环。⚠️ 本组件没有 event_inbox（零消费，§6.6 铁律三），不需要
+		// 消费者循环；`workflow_tasks` 本身不分区（设计计划 §9 第 2 条）——
+		// 但 event_outbox **是**分区表，跟其余所有组件一样需要周分区维护，
+		// 这是真机发现补上的一个真实缺口（迁移只种了 4 周初始分区，缺了
+		// 这个循环会在第 5 周起让 Outbox 写入静默失败，详见根
+		// docs/dev/实测踩坑记录.md 对应条目）。
 		Start: func(ctx context.Context) error {
-			errCh := make(chan error, 2)
+			errCh := make(chan error, 3)
 			go func() { errCh <- besdk.StartOutboxPump(ctx, rt.DB, schema, rt.NATS, rt.Logger) }()
 			go func() { errCh <- startOverdueScan(ctx, svc, rt.Logger) }()
+			go func() { errCh <- partition.Start(ctx, rt.DB, role, schema, rt.Logger) }()
 
 			select {
 			case <-ctx.Done():

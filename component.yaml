@@ -4,7 +4,13 @@ kind: Component
 metadata:
   id: infra/workflow                  # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 审批待办中心
-  version: 1.0.0                      # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.1                      # 精确版本，不接受 ^ / ~ / latest
+                                       # v1.0.1：阶段三 Task 13 旁路发现并修复一个真实缺口——
+                                       # event_outbox 是分区表但 Module.Start 从没接过周分区
+                                       # 维护循环，迁移只种了 4 周初始分区，第 5 周起 Outbox
+                                       # 写入会静默失败。补 backend/internal/partition + 接入
+                                       # Start，真机对着运行中的容器验证过会真的建出新分区，
+                                       # 无破坏性变更
   description: 轻量待办箱——接收业务组件登记的审批/异常任务，维护待办列表与审批历史，完成后发事件回话。三条铁律：不判业务规则、不查业务库、不反向调用业务组件（设计书 §6.6）
   license: Apache-2.0
   vendor: brickKit
@@ -52,7 +58,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/infra-workflow:1.0.0
+  image: brickenterprise/infra-workflow:1.0.1
   port: 8201                          # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9201 }      # → INFRA_WORKFLOW_GRPC_ENDPOINT（值仍以 http:// 开头）
