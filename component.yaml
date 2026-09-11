@@ -4,7 +4,9 @@ kind: Component
 metadata:
   id: infra/workflow                  # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 审批待办中心
-  version: 1.0.1                      # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.2                      # 精确版本，不接受 ^ / ~ / latest
+                                       # v1.0.2：docs/手册.md 的 TEST_PG_DSN 示例改指向
+                                       # brickkit_test_db，纯文档，无行为/契约变更
                                        # v1.0.1：阶段三 Task 13 旁路发现并修复一个真实缺口——
                                        # event_outbox 是分区表但 Module.Start 从没接过周分区
                                        # 维护循环，迁移只种了 4 周初始分区，第 5 周起 Outbox
@@ -58,7 +60,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/infra-workflow:1.0.1
+  image: brickenterprise/infra-workflow:1.0.2
   port: 8201                          # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9201 }      # → INFRA_WORKFLOW_GRPC_ENDPOINT（值仍以 http:// 开头）
