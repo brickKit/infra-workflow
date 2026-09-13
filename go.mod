@@ -4,11 +4,22 @@ go 1.25.0
 
 require (
 	github.com/brickKit/be-sdk-go v0.2.3
+	github.com/brickKit/infra-workflow/gen/infra/workflow v0.0.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
+	github.com/jackc/pgx/v5 v5.10.0
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 )
+
+// gen/infra/workflow 是本仓库自己嵌套的 go module（不是外部依赖，铁律六
+// 第二类白名单，设计书 §13.3）——独立成 module 是为了让 erp-sales 直接
+// import 这份真身包，取代它自己 vendor 的一份逐字复制镜像（阶段四调研
+// 记录 04 §13：vendored-contract 一旦调用方和被调方编译进同一个进程会在
+// protobuf 全局注册表撞车，replace 也解决不了，只能改成直接 import 真身）。
+// 本仓库自己 standalone 构建时用这条本地 replace；module 边界切在 v1
+// 目录的上一级，因为 Go 模块路径禁止以字面量 `/v1` 结尾。
+replace github.com/brickKit/infra-workflow/gen/infra/workflow => ./gen/infra/workflow
 
 require (
 	github.com/MicahParks/jwkset v0.11.3 // indirect
@@ -34,7 +45,6 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
-	github.com/jackc/pgx/v5 v5.10.0 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.19.1 // indirect

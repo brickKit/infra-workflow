@@ -4,7 +4,8 @@ kind: Component
 metadata:
   id: infra/workflow                  # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
   name: 审批待办中心
-  version: 1.0.2                      # 精确版本，不接受 ^ / ~ / latest
+  version: 1.0.3                      # 精确版本，不接受 ^ / ~ / latest
+                                      # v1.0.3：gen/infra/workflow 拆成独立嵌套 go module（module 边界切在 v1 目录上一级，因为 Go 模块路径禁止以字面量 /v1 结尾）——铁律六新增第二类白名单（生成物契约包，与 be-sdk-* 同类，设计书§13.3），让 erp-sales 能直接 import 这份真身包，取代它自己 vendor 的一份逐字复制镜像。原因： vendored-contract 一旦调用方和被调方编译进同一个进程会在 protobuf 全局注册表撞车，Go 的 module system 没有别的办法去重（阶段四调研记录 04 §13）。本仓库自己 standalone 构建/测试用本地 replace 完全不受影响， import-scan/单测全绿。无业务行为/契约变更。
                                        # v1.0.2：docs/手册.md 的 TEST_PG_DSN 示例改指向
                                        # brickkit_test_db，纯文档，无行为/契约变更
                                        # v1.0.1：阶段三 Task 13 旁路发现并修复一个真实缺口——
@@ -60,7 +61,7 @@ configSchema:
 
 deployment:
   type: container
-  image: brickenterprise/infra-workflow:1.0.2
+  image: brickenterprise/infra-workflow:1.0.3
   port: 8201                          # 端口册 registry/ports.tsv
   extraPorts:
     - { name: grpc, port: 9201 }      # → INFRA_WORKFLOW_GRPC_ENDPOINT（值仍以 http:// 开头）
