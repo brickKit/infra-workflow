@@ -43,9 +43,9 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/TaskDetail" }
         "403":
-          description: 不在自己的数据范围内（owner/org 两维都不匹配）
+          description: 没有权限键 infra.workflow.task.view
         "404":
-          description: 待办不存在
+          description: 待办不存在，或不在自己的数据范围内（owner/org 两维都不匹配）。两种情况的状态码与错误信息一样，不泄露这个 id 有没有一条待办
 
   /infra/workflow/tasks/{id}/approve:
     post:
