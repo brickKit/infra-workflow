@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -42,6 +43,10 @@ func (s *Service) CreateTask(ctx context.Context, in repo.CreateTaskInput) (*rep
 	}
 	if in.SourceComponent == "" || in.SourceAggregate == "" || in.SourceID == "" {
 		return nil, fmt.Errorf("%w: 来源四元组（source_component/aggregate/id）不能为空", ErrInvalidArgument)
+	}
+	// summary 写进 JSONB 列；不是合法 JSON 是调用方的错，不能等数据库报错变成 Internal。
+	if len(in.Summary) > 0 && !json.Valid(in.Summary) {
+		return nil, fmt.Errorf("%w: summary_json 不是合法的 JSON", ErrInvalidArgument)
 	}
 	t, err := s.repo.CreateTask(ctx, in)
 	if err != nil {

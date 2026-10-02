@@ -102,8 +102,10 @@ func (r *Repo) CreateTask(ctx context.Context, in CreateTaskInput) (*Task, error
 			return err
 		}
 
+		// summary_json 在契约里可选：gRPC 不填时到这里是空字节串（不是 nil），
+		// 存成 {}，不把空串塞进 JSONB 列。
 		summary := in.Summary
-		if summary == nil {
+		if len(summary) == 0 {
 			summary = json.RawMessage(`{}`)
 		}
 		if err := tx.QueryRowContext(ctx, `

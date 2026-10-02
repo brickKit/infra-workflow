@@ -192,3 +192,18 @@ func TestRejectTask_缺附言ErrInvalidArgument(t *testing.T) {
 		t.Fatalf("空附言应该 ErrInvalidArgument，实际：%v", err)
 	}
 }
+
+// TestCreateTask_summary不是合法JSON返回参数错误：summary_json 是调用方给的
+// 展示快照，写进 JSONB 列。不是合法 JSON 是调用方的错，应该是参数错误
+// （gRPC InvalidArgument），而不是数据库报错之后变成 Internal。
+func TestCreateTask_summary不是合法JSON返回参数错误(t *testing.T) {
+	svc, _ := newTestService(t)
+	_, err := svc.CreateTask(context.Background(), repo.CreateTaskInput{
+		IdempotencyKey: uniqueSuffix("bad-summary"), Type: repo.TypeApproval, AssigneeSub: uniqueSuffix("sub"),
+		Title: "坏快照", Summary: []byte(`{"amount": 100`),
+		SourceComponent: "erp/sales", SourceAggregate: "sales_order", SourceID: "s-bad",
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("summary 不是合法 JSON 应该 ErrInvalidArgument，实际：%v", err)
+	}
+}
