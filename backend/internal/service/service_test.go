@@ -82,7 +82,7 @@ func TestGetTaskDetail_范围内OR命中(t *testing.T) {
 	}
 }
 
-func TestGetTaskDetail_范围外ErrNotFound(t *testing.T) {
+func TestGetTaskDetail_范围外的待办查不到ErrNotFound(t *testing.T) {
 	svc, r := newTestService(t)
 	task, err := r.CreateTask(context.Background(), repo.CreateTaskInput{
 		IdempotencyKey: uniqueSuffix("detail-out"), Type: repo.TypeApproval,
