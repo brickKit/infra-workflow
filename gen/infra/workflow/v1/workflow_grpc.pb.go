@@ -61,8 +61,12 @@ type WorkflowServiceClient interface {
 	GetTaskStatus(ctx context.Context, in *GetTaskStatusRequest, opts ...grpc.CallOption) (*TaskStatusResponse, error)
 	// BatchGetTasks 是防 N+1 的唯一合法批量读方式（§3.8）。
 	BatchGetTasks(ctx context.Context, in *BatchGetTasksRequest, opts ...grpc.CallOption) (*BatchGetTasksResponse, error)
-	// ListTasks 按 assignee/状态/来源筛，走 ScopeFilter（数据权限在服务端
-	// 从已验签的 JWT claims 推导，不由调用方在请求里指定）。
+	// ListTasks 按状态/类型/来源筛。⚠️ 同 BatchGetTasks/GetTaskStatus——这
+	// 是组件间协议，不经过 besdk.RequirePermission，ctx 里没有已验签的
+	// Claims（本项目目前没有任何组件在 gRPC 侧转发/验证 JWT，见
+	// BatchGetBalance 一类的既有判据），因此不做数据权限过滤，见的是全部
+	// 待办。人类操作的"我的待办"/"全局待办视图"两个数据权限维度只在 REST
+	// 面生效（backend/internal/http，走 besdk.ScopeOf(ctx)）。
 	ListTasks(ctx context.Context, in *ListTasksRequest, opts ...grpc.CallOption) (*ListTasksResponse, error)
 }
 
@@ -168,8 +172,12 @@ type WorkflowServiceServer interface {
 	GetTaskStatus(context.Context, *GetTaskStatusRequest) (*TaskStatusResponse, error)
 	// BatchGetTasks 是防 N+1 的唯一合法批量读方式（§3.8）。
 	BatchGetTasks(context.Context, *BatchGetTasksRequest) (*BatchGetTasksResponse, error)
-	// ListTasks 按 assignee/状态/来源筛，走 ScopeFilter（数据权限在服务端
-	// 从已验签的 JWT claims 推导，不由调用方在请求里指定）。
+	// ListTasks 按状态/类型/来源筛。⚠️ 同 BatchGetTasks/GetTaskStatus——这
+	// 是组件间协议，不经过 besdk.RequirePermission，ctx 里没有已验签的
+	// Claims（本项目目前没有任何组件在 gRPC 侧转发/验证 JWT，见
+	// BatchGetBalance 一类的既有判据），因此不做数据权限过滤，见的是全部
+	// 待办。人类操作的"我的待办"/"全局待办视图"两个数据权限维度只在 REST
+	// 面生效（backend/internal/http，走 besdk.ScopeOf(ctx)）。
 	ListTasks(context.Context, *ListTasksRequest) (*ListTasksResponse, error)
 	mustEmbedUnimplementedWorkflowServiceServer()
 }
