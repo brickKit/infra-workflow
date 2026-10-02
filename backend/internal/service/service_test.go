@@ -324,3 +324,31 @@ func TestListTasks_gRPC系统视图AllDepts仍看全部(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateTask_assignee_dept_path不是真实路径报参数错误：assignee_dept_path
+// 是调用方给的快照，要么是真实路径（以 / 开头），要么留空（被指派人没分部门）。
+// 调用方把自己的 ScopeFilter.Prefix 原样传进来时，没分部门的人会带来哨兵
+// besdk.NoDeptPath；存进行里之后，所有没分部门的人的前缀都等于它，彼此看得到
+// 对方的待办。所以不以 / 开头的非空值一律是调用方的错。
+func TestCreateTask_assignee_dept_path不是真实路径报参数错误(t *testing.T) {
+	svc, _ := newTestService(t)
+	for _, dept := range []string{besdk.NoDeptPath, "1/12/", "abc"} {
+		_, err := svc.CreateTask(context.Background(), repo.CreateTaskInput{
+			IdempotencyKey: uniqueSuffix("bad-dept"), Type: repo.TypeApproval,
+			AssigneeSub: uniqueSuffix("assignee"), AssigneeDeptPath: dept,
+			Title: "坏路径", SourceComponent: "erp/sales", SourceAggregate: "sales_order", SourceID: "bd-1",
+		})
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("assignee_dept_path=%q 应该 ErrInvalidArgument，实际：%v", dept, err)
+		}
+	}
+	for _, dept := range []string{"", "/", "/1/12/"} {
+		if _, err := svc.CreateTask(context.Background(), repo.CreateTaskInput{
+			IdempotencyKey: uniqueSuffix("ok-dept"), Type: repo.TypeApproval,
+			AssigneeSub: uniqueSuffix("assignee"), AssigneeDeptPath: dept,
+			Title: "好路径", SourceComponent: "erp/sales", SourceAggregate: "sales_order", SourceID: "bd-2",
+		}); err != nil {
+			t.Fatalf("assignee_dept_path=%q 应该照常建待办，实际：%v", dept, err)
+		}
+	}
+}
