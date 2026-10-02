@@ -8,10 +8,13 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
@@ -27,6 +30,18 @@ func RegisterRoutes(eng *gin.Engine, svc *service.Service) {
 	besdk.POST(g, "/tasks/:id/approve", "infra.workflow.task.act", approveTaskHandler(svc))
 	besdk.POST(g, "/tasks/:id/reject", "infra.workflow.task.act", rejectTaskHandler(svc))
 	besdk.GET(g, "/admin/tasks", "infra.workflow.admin", listHandler(svc.ListTasksAdmin, true))
+}
+
+// restStatus 是 REST 面的错误翻译：与 gRPC 共用 service.ToStatus，只有
+// "待办已经不是 PENDING"一处不同。gRPC 里它是 FailedPrecondition（状态不满足
+// 前提，调用方是业务组件）；但 SDK 把 FailedPrecondition 映射成 400，而 REST
+// 契约对它写的是 409——前端靠 409 区分"已经被处理了，刷新一下"与"请求写错了"。
+// Aborted 在 SDK 的映射里正是 409。
+func restStatus(err error) error {
+	if errors.Is(err, repo.ErrNotPending) {
+		return status.Error(codes.Aborted, err.Error())
+	}
+	return service.ToStatus(err)
 }
 
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
@@ -86,7 +101,7 @@ func listHandler(list listFunc, acceptAssignee bool) gin.HandlerFunc {
 		}
 		tasks, nextCursor, err := list(c.Request.Context(), in)
 		if err != nil {
-			_ = c.Error(service.ToStatus(err))
+			_ = c.Error(restStatus(err))
 			return
 		}
 		dtos := make([]gin.H, 0, len(tasks))
@@ -101,7 +116,7 @@ func getTaskHandler(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		t, actions, err := svc.GetTaskDetail(c.Request.Context(), c.Param("id"))
 		if err != nil {
-			_ = c.Error(service.ToStatus(err))
+			_ = c.Error(restStatus(err))
 			return
 		}
 		dto := toTaskDTO(t)
@@ -129,7 +144,7 @@ func approveTaskHandler(svc *service.Service) gin.HandlerFunc {
 		}
 		t, err := svc.ApproveTask(c.Request.Context(), c.Param("id"), req.Comment)
 		if err != nil {
-			_ = c.Error(service.ToStatus(err))
+			_ = c.Error(restStatus(err))
 			return
 		}
 		c.JSON(http.StatusOK, toTaskDTO(t))
@@ -152,7 +167,7 @@ func rejectTaskHandler(svc *service.Service) gin.HandlerFunc {
 		}
 		t, err := svc.RejectTask(c.Request.Context(), c.Param("id"), req.Comment)
 		if err != nil {
-			_ = c.Error(service.ToStatus(err))
+			_ = c.Error(restStatus(err))
 			return
 		}
 		c.JSON(http.StatusOK, toTaskDTO(t))

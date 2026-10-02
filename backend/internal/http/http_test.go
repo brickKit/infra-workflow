@@ -175,3 +175,23 @@ func TestGetTask_范围外403(t *testing.T) {
 		t.Fatalf("范围外期望 403，实际 %d：%v", code, body)
 	}
 }
+
+// TestApproveReject_已不是PENDING返回409：契约写明对已经处理过的待办再
+// approve / reject 返回 409（状态冲突），前端据此提示"已被处理"并刷新，
+// 而不是当成请求写错了（400）。
+func TestApproveReject_已不是PENDING返回409(t *testing.T) {
+	svc, r := testService(t)
+	assignee := unique("assignee")
+	id := createTask(t, r, assignee, "/1/12/")
+	eng := engineAs(svc, assignee, "/1/12/")
+
+	if code, body := do(t, eng, http.MethodPost, "/infra/workflow/tasks/"+id+"/approve", `{"comment":"同意"}`); code != http.StatusOK {
+		t.Fatalf("第一次同意期望 200，实际 %d：%v", code, body)
+	}
+	if code, body := do(t, eng, http.MethodPost, "/infra/workflow/tasks/"+id+"/approve", `{"comment":"再点一次"}`); code != http.StatusConflict {
+		t.Fatalf("已同意的待办再同意期望 409，实际 %d：%v", code, body)
+	}
+	if code, body := do(t, eng, http.MethodPost, "/infra/workflow/tasks/"+id+"/reject", `{"comment":"改主意了"}`); code != http.StatusConflict {
+		t.Fatalf("已同意的待办再驳回期望 409，实际 %d：%v", code, body)
+	}
+}
