@@ -90,7 +90,10 @@ func startOverdueScan(ctx context.Context, svc *service.Service, logger *slog.Lo
 		for {
 			n, err := svc.MarkOverdueAndPublish(ctx)
 			if err != nil {
-				logger.Error("扫描超期待办失败", "error", err)
+				// ctx 已取消是进程在关停，扫描半途失败不是故障，不记。
+				if ctx.Err() == nil {
+					logger.Error("扫描超期待办失败", "error", err)
+				}
 				return
 			}
 			if n < repo.OverdueBatchSize {

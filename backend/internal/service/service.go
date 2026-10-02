@@ -13,6 +13,8 @@ import (
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 var ErrInvalidArgument = errors.New("参数不合法")
@@ -24,6 +26,22 @@ type Service struct {
 
 func New(r *repo.Repo, logger *slog.Logger) *Service {
 	return &Service{repo: r, logger: logger}
+}
+
+// logFailure 按错误性质选日志级别：调用方断开或进程关停带来的取消 / 超时记 Warn；
+// 映射成 Internal 的是服务端故障，运维要处理，记 ERROR；其余都是调用方自己能纠正
+// 的错误（参数不合法、幂等键被别的命令用过、找不到、已经不是 PENDING），SDK 的
+// 访问日志与 RED 指标已经记下了状态码，这里只记 Info。
+func (s *Service) logFailure(ctx context.Context, msg string, err error, attrs ...any) {
+	attrs = append(attrs, "error", err)
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), ctx.Err() != nil:
+		s.logger.WarnContext(ctx, msg, attrs...)
+	case status.Code(ToStatus(err)) == codes.Internal:
+		s.logger.ErrorContext(ctx, msg, attrs...)
+	default:
+		s.logger.InfoContext(ctx, msg, attrs...)
+	}
 }
 
 // ── 命令：CreateTask / CloseTask / CancelTask（组件间协议，不进 REST）。
@@ -58,7 +76,7 @@ func (s *Service) CreateTask(ctx context.Context, in repo.CreateTaskInput) (*rep
 	}
 	t, err := s.repo.CreateTask(ctx, in)
 	if err != nil {
-		s.logger.Error("建待办失败", "source_component", in.SourceComponent, "source_id", in.SourceID, "error", err)
+		s.logFailure(ctx, "建待办失败", err, "source_component", in.SourceComponent, "source_id", in.SourceID)
 		return nil, err
 	}
 	return t, nil
@@ -73,7 +91,7 @@ func (s *Service) CloseTask(ctx context.Context, in repo.CloseTaskInput) (*repo.
 	}
 	t, err := s.repo.CloseTask(ctx, in)
 	if err != nil {
-		s.logger.Error("关闭待办失败", "task_id", in.TaskID, "error", err)
+		s.logFailure(ctx, "关闭待办失败", err, "task_id", in.TaskID)
 		return nil, err
 	}
 	return t, nil
@@ -88,7 +106,7 @@ func (s *Service) CancelTask(ctx context.Context, in repo.CancelTaskInput) (*rep
 	}
 	t, err := s.repo.CancelTask(ctx, in)
 	if err != nil {
-		s.logger.Error("作废待办失败", "task_id", in.TaskID, "error", err)
+		s.logFailure(ctx, "作废待办失败", err, "task_id", in.TaskID)
 		return nil, err
 	}
 	return t, nil
