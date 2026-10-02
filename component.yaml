@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: infra/workflow
   name: Workflow inbox
-  version: 2.0.0
+  version: 2.0.1
   description: A light task inbox; business components register approval and exception tasks, and completion is reported back by event.
   repository: https://github.com/brickKit/infra-workflow
   license: Apache-2.0

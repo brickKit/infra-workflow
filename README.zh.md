@@ -7,7 +7,7 @@
 ## 在项目里使用
 
 ```bash
-brickkit add infra/workflow@2.0.0
+brickkit add infra/workflow@2.0.1
 brickkit up
 ```
 

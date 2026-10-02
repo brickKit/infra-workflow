@@ -7,7 +7,7 @@ A light task inbox: business components register approval and exception tasks, p
 ## Use it in a project
 
 ```bash
-brickkit add infra/workflow@2.0.0
+brickkit add infra/workflow@2.0.1
 brickkit up
 ```
 
