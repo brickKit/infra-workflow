@@ -13,12 +13,11 @@ import (
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 	"google.golang.org/grpc"
 
-	grpcapi "github.com/brickKit/infra-workflow/backend/internal/grpc"
-	httpapi "github.com/brickKit/infra-workflow/backend/internal/http"
-	"github.com/brickKit/infra-workflow/backend/internal/partition"
-	"github.com/brickKit/infra-workflow/backend/internal/repo"
-	"github.com/brickKit/infra-workflow/backend/internal/service"
-	"github.com/brickKit/infra-workflow/migrations"
+	grpcapi "github.com/brickKit/infra-workflow/v2/backend/internal/grpc"
+	httpapi "github.com/brickKit/infra-workflow/v2/backend/internal/http"
+	"github.com/brickKit/infra-workflow/v2/backend/internal/partition"
+	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
+	"github.com/brickKit/infra-workflow/v2/backend/internal/service"
 )
 
 // New 构造 infra-workflow 模块。签名一个字都不许改（§12.5.1）——62 个
@@ -29,7 +28,7 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 	// besdk.NewGinEngine/RequirePermission 内部自己从 rt.Config 取（同
 	// erp-inventory 的既有判据：它也声明了这两项，module.go 里同样没有
 	// 出现）。
-	schema := rt.Config.StringOr("pgSchema", "infra_workflow")
+	schema := rt.Config.StringOr("PG_SCHEMA", "infra_workflow")
 	role := schema + "_rw"
 
 	// ⚠️ 池从 rt.DB 来，不许自己 sql.Open（§13.3 铁律二）。
@@ -49,8 +48,6 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 		RegisterGRPC: func(gs *grpc.Server) {
 			workflowv1.RegisterWorkflowServiceServer(gs, grpcapi.New(svc))
 		},
-
-		Migrations: migrations.FS, // 合并态由外壳按拓扑顺序跑（§13.3 铁律五）
 
 		// 后台循环：Outbox 推送 + 超期扫描 + event_outbox 周分区维护。三个
 		// 循环必须并发跑，不能顺序调用——它们各自是阻塞到 ctx 取消才返回

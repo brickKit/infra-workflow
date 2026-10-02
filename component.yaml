@@ -2,20 +2,11 @@ apiVersion: brickkit/v1
 kind: Component
 
 metadata:
-  id: infra/workflow                  # ⚠️ Fork 件必须与标准件完全一致（§3.4.1）
-  name: 审批待办中心
-  version: 1.0.4                      # 精确版本，不接受 ^ / ~ / latest
-                                      # v1.0.4：同 mdm/customer 这次改动，删掉 deployment.labels 的 prometheus.io/port，理由同上。无业务行为/契约变更。
-                                      # v1.0.3：gen/infra/workflow 拆成独立嵌套 go module（module 边界切在 v1 目录上一级，因为 Go 模块路径禁止以字面量 /v1 结尾）——铁律六新增第二类白名单（生成物契约包，与 be-sdk-* 同类，设计书§13.3），让 erp-sales 能直接 import 这份真身包，取代它自己 vendor 的一份逐字复制镜像。原因： vendored-contract 一旦调用方和被调方编译进同一个进程会在 protobuf 全局注册表撞车，Go 的 module system 没有别的办法去重（阶段四调研记录 04 §13）。本仓库自己 standalone 构建/测试用本地 replace 完全不受影响， import-scan/单测全绿。无业务行为/契约变更。
-                                       # v1.0.2：docs/手册.md 的 TEST_PG_DSN 示例改指向
-                                       # brickkit_test_db，纯文档，无行为/契约变更
-                                       # v1.0.1：阶段三 Task 13 旁路发现并修复一个真实缺口——
-                                       # event_outbox 是分区表但 Module.Start 从没接过周分区
-                                       # 维护循环，迁移只种了 4 周初始分区，第 5 周起 Outbox
-                                       # 写入会静默失败。补 backend/internal/partition + 接入
-                                       # Start，真机对着运行中的容器验证过会真的建出新分区，
-                                       # 无破坏性变更
-  description: 轻量待办箱——接收业务组件登记的审批/异常任务，维护待办列表与审批历史，完成后发事件回话。三条铁律：不判业务规则、不查业务库、不反向调用业务组件（设计书 §6.6）
+  id: infra/workflow
+  name: Workflow inbox
+  version: 2.0.0
+  description: A light task inbox; business components register approval and exception tasks, and completion is reported back by event.
+  repository: https://github.com/brickKit/infra-workflow
   license: Apache-2.0
   vendor: brickKit
 
@@ -24,67 +15,50 @@ tags: [infra, workflow, approval]
 artifacts:
   - type: api-contract
     format: protobuf
-    files:
-      - contracts/infra/workflow/v1/workflow.proto
-      - contracts/events/workflow.events.json
+    files: [contracts/infra/workflow/v1/workflow.proto, contracts/events/workflow.events.json]
   - type: api-contract
     format: openapi
     files: [contracts/workflow.openapi.yaml]
-  - type: metadata                    # ← assembly.yaml 靠这一条随组件分发（§3.5）
+  - type: metadata
     files: [assembly.yaml]
 
-# ⚠️ 零强依赖零弱依赖——本组件在同步图上只有入边（设计计划 §5、§6）。
-# 谁调我、我发什么事件都不构成依赖边；"严禁反向同步调用业务组件"
-# （§6.6 铁律三）意味着这里永远不会多出一条边。
 dependencies:
   components: []
-  resources:
-    # ⚠️ engine 逐字参与匹配（设计书 §2.7.3.1）：这里写的词必须与
-    #    brickkit.yaml 的 resources[].engine 完全相同，平台不认别名。
-    - { kind: database, engine: postgresql }
-    - { kind: mq,       engine: nats }         # 发 infra.workflow.task.*.v1
 
 configSchema:
   type: object
   properties:
-    pgSchema:                         # ⚠️ 不能叫 databaseSchema，DATABASE_ 是保留前缀
-      type: string
-      default: infra_workflow
-    otelBaseUrl:                      # ⚠️ 不能叫 otelEndpoint，*_ENDPOINT 是保留后缀
-      type: string
-      default: ""                     # 空 → Blackhole Exporter，零成本（§7.5）
-    iamJwksUrl:                       # JWT 本地验签的公钥来源——指向 infra-iam-casdoor，
-      type: string                    # 不是本组件自己（本组件不签发 token，只验签）
-      default: ""
-    authzBundleUrl:                   # 权限判定的 bundle 轮询地址——指向 infra-authz
-      type: string
-      default: ""
+    PG_HOST: {type: string}
+    PG_PORT: {type: string, default: "5432"}
+    PG_DATABASE: {type: string}
+    PG_USER: {type: string}
+    PG_PASSWORD: {type: string, secret: true}
+    PG_SCHEMA: {type: string, default: infra_workflow}
+    NATS_URL: {type: string}
+    OTEL_BASE_URL: {type: string, default: ""}
+    AUTHZ_BUNDLE_URL: {type: string}
+    IAM_JWKS_URL: {type: string}
+  required: [PG_HOST, PG_DATABASE, PG_USER, PG_PASSWORD, NATS_URL, AUTHZ_BUNDLE_URL, IAM_JWKS_URL]
 
 deployment:
   type: container
-  image: brickenterprise/infra-workflow:1.0.4
-  port: 8201                          # 端口册 registry/ports.tsv
+  build: {context: ., dockerfile: Dockerfile}
+  port: 8201
   extraPorts:
-    - { name: grpc, port: 9201 }      # → INFRA_WORKFLOW_GRPC_ENDPOINT（值仍以 http:// 开头）
-  labels:                             # 平台只搬运，不解释键值。值必须是字符串
+    - {name: grpc, port: 9201}
+  labels:
     prometheus.io/scrape: "true"
-    # prometheus.io/port 原来写在这里——阶段四附加 Task 0.1 真机验证
-    # servedBy 时发现这个标签会跟同外壳其它成员的 prometheus.io/port 撞车
-    # 报错（每个组件的值天然不同，servedBy 的 labels 合并规则没有像 env
-    # 变量合并那样排除这类"语义上必然因组件而异"的标签，已反馈给 brickKit，
-    # 见装配仓库 docs/dev/brickKit反馈-servedBy的labels合并漏了排除规则.md）。
-    # 在 brickKit 修复或给出结论之前，暂时从这里删掉，只在合并后的外壳
-    # 自己的条目上保留一份——跟"合并后指标只能走一个共享抓取端口"这个
-    # 事实本来就一致，不是单纯绕过。
-    prometheus.io/path: "/metrics"
+    prometheus.io/path: /metrics
   resources:
-    requests: { cpu: "150m", memory: "192Mi" }
+    requests: {cpu: 150m, memory: 192Mi}
 
 migration:
-  command: ["./migrate", "up"]
+  command: [./migrate, up]
 
 healthCheck:
   type: http
-  path: /healthz                      # ⚠️ 只查本进程存活，严禁查库、查 infra-authz、查依赖方（§12.3.6）
-  # startPeriodSeconds 不写：默认就是 60，Go 组件够用（§12.3.5）
+  path: /healthz
 
+local:
+  language: go
+  runCommand: [go, run, ./backend/cmd/server]

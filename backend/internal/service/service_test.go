@@ -12,7 +12,7 @@ import (
 	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/infra-workflow/backend/internal/repo"
+	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
 	_ "github.com/jackc/pgx/v5/stdlib" // §12.4：不用 lib/pq，驱动名注册为 "pgx"
 )
 

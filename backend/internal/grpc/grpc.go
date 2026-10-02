@@ -12,8 +12,8 @@ import (
 
 	workflowv1 "github.com/brickKit/infra-workflow/gen/infra/workflow/v1"
 
-	"github.com/brickKit/infra-workflow/backend/internal/repo"
-	"github.com/brickKit/infra-workflow/backend/internal/service"
+	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
+	"github.com/brickKit/infra-workflow/v2/backend/internal/service"
 )
 
 type server struct {
