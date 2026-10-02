@@ -50,7 +50,7 @@ Idempotency is claim-first: `INSERT … ON CONFLICT DO NOTHING` on `command_idem
 
 `GetTaskStatus` by `idempotency_key` exists because a timeout is exactly the case where the caller never received the `task_id`. Not found (`TASK_STATUS_UNSPECIFIED`) and `CANCELLED` are never merged: the first means the request never arrived and may be retried, the second that retrying is wrong.
 
-On a task that is no longer `PENDING`, every action fails (`FAILED_PRECONDITION` on gRPC): a replay never reaches the state check, so reaching it on a closed task means a wrong `task_id` or a concurrent action that won. gRPC reads are not filtered by data scope: calls between components carry no user identity, and `besdk.ScopeOf` would panic there.
+On a task that is no longer `PENDING`, every action fails (`FAILED_PRECONDITION` on gRPC): a replay never reaches the state check, so reaching it on a closed task means a wrong `task_id` or a concurrent action that won. gRPC reads are not filtered by data scope: calls between components carry no user identity, and `besdk.ScopeOf` would panic there. `ListTasks` says so explicitly (`AllDepts` in the repository), never through an empty prefix. `CreateTask` takes `assignee_dept_path` only as a path starting with `/` or empty.
 
 REST under `/infra/workflow`, for people:
 
@@ -108,8 +108,10 @@ Two dimensions on `workflow_tasks`, both about the **assignee**: `owner` = `assi
 
 - "My tasks" (`GET /tasks`): `assignee_sub = me OR assignee_dept_path LIKE my_dept_path || '%'`. The OR is in the contract. Both operands come from the caller's `ScopeOf`; leaving the prefix empty turns it into match-all and the OR into "everyone sees everything".
 - Admin view (`GET /admin/tasks`): `org` only, bypassing `owner` but not `org`: the caller's department subtree, not the whole tenant.
-- A caller whose `dept_path` is empty sits at the root of the tree and sees everything; that is the SDK's definition of "unrestricted", not a missing value.
-- Tests with real rows for both: someone else's task in another department never appears in "my tasks" (`TestListTasks_我的待办用OR不是AND`, `TestListMyTasks_service层注入两维ScopeOf`), and the detail answers `403` outside the scope.
+- System view (gRPC `ListTasks`): every department, asked for with an explicit `AllDepts`. The repository refuses an empty `ScopePrefix` on any other view with `ErrInvalidArgument`: an empty prefix is a missing value, and treating it as "unrestricted" is fail-open.
+- A caller with no department: authz always issues real paths starting with `/`, the root department included, so an empty `dept_path` means the person has not been placed in a department yet. be-sdk-go turns it into the sentinel prefix `besdk.NoDeptPath`, which no row starts with: that caller sees only the tasks assigned to them in "my tasks", nothing in the admin view, and `403` on anyone else's detail. Someone who must see the whole tree is placed in the root department or given the root marker `/`.
+- `assignee_dept_path` on a row is the assignee's real path or empty. A task with an empty one is in no department: only the assignee sees it, a root-department manager does not. `CreateTask` refuses any other value, so a caller that passes its own scope value by mistake cannot store the sentinel, which would make every person without a department see the others' tasks.
+- Tests with real rows: someone else's task in another department never appears in "my tasks" (`TestListTasks_我的待办用OR不是AND`, `TestListMyTasks_service层注入两维ScopeOf`); a caller with no department sees only their own (`TestListMyTasks_无部门的人只看到指派给自己的待办`, `TestListTasksAdmin_无部门的管理员看不到任何部门的待办`, `TestGetTaskDetail_无部门的人看别人的待办是Forbidden`); the system view still sees everything (`TestListTasks_gRPC系统视图AllDepts仍看全部`); the detail answers `403` outside the scope.
 
 ## Reference implementations
 

@@ -53,7 +53,7 @@ In the BrickEnterprise project the password is `POSTGRES_PASSWORD` in the projec
 
 - **An inbox, not a workflow engine.** No routing rules, no business data, no calls back: the assignee comes from the caller, the display fields come in `summary`, the outcome goes out as `task.completed.v1`.
 - **No dependencies, no consumed events.** Only incoming edges; `make dag-check` fails on any dependency.
-- **Two data-scope dimensions, both on the assignee**: `assignee_sub` (owner) and `assignee_dept_path` (org, prefix). "My tasks" is `owner OR org`; the admin view is `org` only.
+- **Two data-scope dimensions, both on the assignee**: `assignee_sub` (owner) and `assignee_dept_path` (org, prefix). "My tasks" is `owner OR org`; the admin view is `org` only; the gRPC `ListTasks` is the system view, asked for explicitly with `AllDepts`. A caller with no department gets the SDK's sentinel prefix `besdk.NoDeptPath`, which matches no row, so only the owner side is left.
 - **Seeing is not acting**: a manager in the department subtree may see a task; only the assignee may approve or reject it.
 - **Commands are claim-first idempotent** in one table, `command_idempotency`, keyed by `idempotency_key` and checked against the command that used it first.
 - **Overdue is reported, never acted on**: the scan sets `overdue_notified_at` and publishes once; the status stays `PENDING`.
@@ -63,7 +63,9 @@ In the BrickEnterprise project the password is `POSTGRES_PASSWORD` in the projec
 | Never | Symptom | Why |
 |---|---|---|
 | Add a field or branch that decides something about the business ("amount above X needs a second level") | Nothing breaks; the next requirement adds another, and the inbox turns into a hidden rules engine nobody can replace | Who approves is the caller's rule; it passes the assignee in |
-| Leave `ScopeOwner` or `ScopePrefix` empty on a REST list | Tests on other paths stay green; "my tasks" shows every task in the company | An empty prefix matches everything, and inside an `OR` one match-all operand makes the whole filter match all; `TestListMyTasks_service层注入两维ScopeOf` covers it |
+| Leave `ScopeOwner` or `ScopePrefix` empty on a REST list, or say "all departments" with an empty prefix | `repo.ListTasks` answers `ErrInvalidArgument` (`400`) | An empty prefix matches everything, and inside an `OR` one match-all operand makes the whole filter match all; the repository refuses it (`TestListTasks_非系统视图ScopePrefix留空报InvalidArgument`). Take both operands from `ScopeOf`; only the gRPC system view sets `AllDepts` |
+| Treat an empty `dept_path` as "the root, sees everything" | A new account with no department, granted only the view key, sees every task in the company | Real paths always start with `/` (the root department too); an empty one means no department. be-sdk-go v0.5.0 turns it into the sentinel `besdk.NoDeptPath`; `TestListMyTasks_无部门的人只看到指派给自己的待办` covers it |
+| Store a value that does not start with `/` in `assignee_dept_path` | Every person without a department shares the sentinel prefix and sees every task stored with it | `CreateTask` refuses it (`INVALID_ARGUMENT`); a caller passes the assignee's real path or empty, never its own `ScopeFilter.Prefix` |
 | Call `besdk.ScopeOf` on a gRPC path | The call panics (`500`) | gRPC calls carry no user claims; data scopes exist only on REST |
 | Let a department manager approve because `Task.InScope` is true | A manager signs off a subordinate's approval with no record that it was delegated | `InScope` is visibility; acting requires `assignee_sub` = caller (`actorInScope`) |
 | Return success for an action on a task that is no longer `PENDING` | The caller believes it acted; a concurrent action silently wins | Replays are short-circuited by idempotency earlier; reaching `transitionTaskTx` on a closed task is a real conflict (`ErrNotPending`, REST `409`) |
@@ -75,7 +77,7 @@ In the BrickEnterprise project the password is `POSTGRES_PASSWORD` in the projec
 
 1. Is this a business rule (who approves, what happens after)? It belongs to the business component, not here.
 2. Am I adding a dependency, a consumed event or a call to another component? Stop: see Design decisions.
-3. A list or a detail on REST: are both scope operands taken from `ScopeOf`? Add a real-database test where someone else's task stays invisible.
+3. A list or a detail on REST: are both scope operands taken from `ScopeOf`? Add a real-database test where someone else's task stays invisible, and one for a caller with no department.
 4. Contract change? Append only: a new field, rpc, query parameter or event. Never remove or retype one.
 5. Did `gen/` change? Then the contract package needs a new tag and `go.mod` must require it.
 6. A new REST route is registered with `besdk.GET` / `POST` and a permission key from `assembly.yaml`.

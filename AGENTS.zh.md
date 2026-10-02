@@ -53,7 +53,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=infra_workfl
 
 - **待办箱，不是流程引擎。** 没有路由规则、没有业务数据、不回调：被指派人由调用方给，展示字段放在 `summary` 里传进来，结果以 `task.completed.v1` 发出去。
 - **没有依赖、不消费事件。** 只有入边；`make dag-check` 遇到任何依赖就失败。
-- **数据范围两维，都落在被指派人身上**：`assignee_sub`（owner）与 `assignee_dept_path`（org，前缀）。"我的待办"是 `owner OR org`；管理视图只判 `org`。
+- **数据范围两维，都落在被指派人身上**：`assignee_sub`（owner）与 `assignee_dept_path`（org，前缀）。"我的待办"是 `owner OR org`；管理视图只判 `org`；gRPC 的 `ListTasks` 是系统视图，用 `AllDepts` 显式要"全部部门"。没分部门的调用者拿到的是 SDK 的哨兵前缀 `besdk.NoDeptPath`，匹配不到任何行，只剩 owner 一侧。
 - **看得见不等于能处理**：部门子树里的主管看得见下属的待办；只有被指派人本人能同意或驳回。
 - **命令 claim-first 幂等**，统一一张表 `command_idempotency`，以 `idempotency_key` 为键，并核对最先用它的是哪个命令。
 - **超期只报告、不处理**：扫描设 `overdue_notified_at`、只发一次事件；状态仍是 `PENDING`。
@@ -63,7 +63,9 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=infra_workfl
 | 不要 | 症状 | 原因 |
 |---|---|---|
 | 加一个替业务做判断的字段或分支（"金额超过 X 要多一级"） | 什么都不坏；下一个需求再加一个，待办箱变成谁也换不掉的隐形规则引擎 | 谁来审批是调用方的规则，它把被指派人传进来 |
-| REST 列表上把 `ScopeOwner` 或 `ScopePrefix` 留空 | 别的路径的测试照样绿；"我的待办"里出现全公司的待办 | 空前缀匹配一切，在 `OR` 里一个"全匹配"操作数就让整个条件匹配一切；`TestListMyTasks_service层注入两维ScopeOf` 守着它 |
+| REST 列表上把 `ScopeOwner` 或 `ScopePrefix` 留空，或者用空前缀表示"全部部门" | `repo.ListTasks` 回 `ErrInvalidArgument`（`400`） | 空前缀匹配一切，在 `OR` 里一个"全匹配"操作数就让整个条件匹配一切；仓储层拒绝它（`TestListTasks_非系统视图ScopePrefix留空报InvalidArgument`）。两个操作数都从 `ScopeOf` 取；只有 gRPC 的系统视图设 `AllDepts` |
+| 把空的 `dept_path` 当成"根节点、看全部" | 一个没分部门、只被授了查看权限的新账号看得到全公司的待办 | 真实路径总以 `/` 开头（根部门也是）；空串表示没分部门。be-sdk-go v0.5.0 把它变成哨兵 `besdk.NoDeptPath`；`TestListMyTasks_无部门的人只看到指派给自己的待办` 守着它 |
+| 往 `assignee_dept_path` 里存不以 `/` 开头的值 | 所有没分部门的人共享同一个哨兵前缀，看得到所有存成它的待办 | `CreateTask` 拒绝它（`INVALID_ARGUMENT`）；调用方传被指派人的真实路径或空串，绝不传自己的 `ScopeFilter.Prefix` |
 | 在 gRPC 路径上调 `besdk.ScopeOf` | 调用 panic（`500`） | gRPC 调用不带用户 claims；数据范围只在 REST 上 |
 | 因为 `Task.InScope` 为真就让部门主管审批 | 主管替下属签了审批，没有任何"转办"记录 | `InScope` 是可见性；处理要求 `assignee_sub` = 调用者（`actorInScope`） |
 | 对已经不是 `PENDING` 的待办的动作返回成功 | 调用方以为自己处理了；并发的另一个动作悄悄赢了 | 重放在更早的幂等那层就短路了；走到 `transitionTaskTx` 时状态不对是真冲突（`ErrNotPending`，REST `409`） |
@@ -75,7 +77,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=infra_workfl
 
 1. 这是业务规则吗（谁来审、审完怎么办）？它属于业务组件，不属于这里。
 2. 我在加依赖、加消费的事件、加对别的组件的调用吗？停下：见设计取舍。
-3. REST 的列表或详情：两个范围操作数都从 `ScopeOf` 取了吗？加一条真实建库、"别人的待办看不到"的测试。
+3. REST 的列表或详情：两个范围操作数都从 `ScopeOf` 取了吗？加一条真实建库、"别人的待办看不到"的测试，再加一条"没分部门的调用者"的。
 4. 改契约？只增：新字段、新 rpc、新查询参数、新事件。绝不删或改类型。
 5. `gen/` 变了吗？契约包要打新 tag，`go.mod` 要 require 它。
 6. 新 REST 路由用 `besdk.GET` / `POST` 加 `assembly.yaml` 里的权限键注册。
