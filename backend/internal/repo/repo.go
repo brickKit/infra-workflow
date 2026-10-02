@@ -41,14 +41,3 @@ func wrap(action string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", action, err)
 }
-
-func mapConstraintErr(err error, notFoundMsg string) error {
-	switch {
-	case isForeignKeyViolation(err):
-		return fmt.Errorf("%w: %s", ErrNotFound, notFoundMsg)
-	case isUniqueViolation(err):
-		return fmt.Errorf("%w: 已存在", ErrInvalidArgument)
-	default:
-		return err
-	}
-}
