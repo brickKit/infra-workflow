@@ -6,6 +6,7 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -21,11 +22,11 @@ import (
 // permissions 段，一字不差（漏写编译不过，见 besdk.GET/POST 的签名）。
 func RegisterRoutes(eng *gin.Engine, svc *service.Service) {
 	g := eng.Group("/infra/workflow")
-	besdk.GET(g, "/tasks", "infra.workflow.task.view", listMyTasksHandler(svc))
+	besdk.GET(g, "/tasks", "infra.workflow.task.view", listHandler(svc.ListMyTasks, false))
 	besdk.GET(g, "/tasks/:id", "infra.workflow.task.view", getTaskHandler(svc))
 	besdk.POST(g, "/tasks/:id/approve", "infra.workflow.task.act", approveTaskHandler(svc))
 	besdk.POST(g, "/tasks/:id/reject", "infra.workflow.task.act", rejectTaskHandler(svc))
-	besdk.GET(g, "/admin/tasks", "infra.workflow.admin", listAdminTasksHandler(svc))
+	besdk.GET(g, "/admin/tasks", "infra.workflow.admin", listHandler(svc.ListTasksAdmin, true))
 }
 
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
@@ -67,32 +68,23 @@ func toTaskActionDTO(a repo.TaskAction) gin.H {
 	}
 }
 
-func listMyTasksHandler(svc *service.Service) gin.HandlerFunc {
+// listFunc 是两个列表端点背后的 service 方法（ListMyTasks / ListTasksAdmin）：
+// 两者的查询参数与响应形状相同，只有数据范围的判法不同，那一半在 service 层。
+type listFunc func(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error)
+
+// listHandler 读列表的查询参数；assignee_sub 只有管理视图认（"我的待办"的
+// 归属恒等于调用者自己，不接受调用方指定）。
+func listHandler(list listFunc, acceptAssignee bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pageSize, _ := strconv.Atoi(c.Query("page_size"))
-		tasks, nextCursor, err := svc.ListMyTasks(c.Request.Context(), repo.ListInput{
+		in := repo.ListInput{
 			Type: c.Query("type"), Status: c.Query("status"),
 			Cursor: c.Query("cursor"), PageSize: int32(pageSize),
-		})
-		if err != nil {
-			_ = c.Error(service.ToStatus(err))
-			return
 		}
-		dtos := make([]gin.H, 0, len(tasks))
-		for _, t := range tasks {
-			dtos = append(dtos, toTaskDTO(t))
+		if acceptAssignee {
+			in.AssigneeSub = c.Query("assignee_sub")
 		}
-		c.JSON(http.StatusOK, gin.H{"tasks": dtos, "next_cursor": nextCursor})
-	}
-}
-
-func listAdminTasksHandler(svc *service.Service) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		pageSize, _ := strconv.Atoi(c.Query("page_size"))
-		tasks, nextCursor, err := svc.ListTasksAdmin(c.Request.Context(), repo.ListInput{
-			Type: c.Query("type"), Status: c.Query("status"), AssigneeSub: c.Query("assignee_sub"),
-			Cursor: c.Query("cursor"), PageSize: int32(pageSize),
-		})
+		tasks, nextCursor, err := list(c.Request.Context(), in)
 		if err != nil {
 			_ = c.Error(service.ToStatus(err))
 			return

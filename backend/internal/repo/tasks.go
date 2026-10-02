@@ -190,7 +190,7 @@ func (r *Repo) BatchGetTasks(ctx context.Context, taskIDs []string) ([]*Task, er
 		defer rows.Close()
 		for rows.Next() {
 			var t Task
-			if err := scanTaskRows(rows, &t); err != nil {
+			if err := scanTask(rows, &t); err != nil {
 				return err
 			}
 			out = append(out, &t)
@@ -231,25 +231,16 @@ type ListInput struct {
 const taskSelectColumns = `SELECT id, type, status, assignee_sub, assignee_dept_path, title, summary,
 	source_component, source_aggregate, source_id, deep_link, due_at, version, created_at, updated_at`
 
-func scanTask(row *sql.Row, t *Task) error {
+// rowScanner 是 *sql.Row 与 *sql.Rows 共有的 Scan：单条查询与列表查询用
+// 同一个 scanTask，列的顺序只在 taskSelectColumns 与这里各写一次。
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanTask(row rowScanner, t *Task) error {
 	var dueAt sql.NullTime
 	var summary []byte
 	if err := row.Scan(&t.ID, &t.Type, &t.Status, &t.AssigneeSub, &t.AssigneeDeptPath, &t.Title, &summary,
-		&t.SourceComponent, &t.SourceAggregate, &t.SourceID, &t.DeepLink, &dueAt, &t.Version,
-		&t.CreatedAt, &t.UpdatedAt); err != nil {
-		return err
-	}
-	t.Summary = summary
-	if dueAt.Valid {
-		t.DueAt = &dueAt.Time
-	}
-	return nil
-}
-
-func scanTaskRows(rows *sql.Rows, t *Task) error {
-	var dueAt sql.NullTime
-	var summary []byte
-	if err := rows.Scan(&t.ID, &t.Type, &t.Status, &t.AssigneeSub, &t.AssigneeDeptPath, &t.Title, &summary,
 		&t.SourceComponent, &t.SourceAggregate, &t.SourceID, &t.DeepLink, &dueAt, &t.Version,
 		&t.CreatedAt, &t.UpdatedAt); err != nil {
 		return err
@@ -318,7 +309,7 @@ func (r *Repo) ListTasks(ctx context.Context, in ListInput) ([]*Task, string, er
 		defer rows.Close()
 		for rows.Next() {
 			var t Task
-			if err := scanTaskRows(rows, &t); err != nil {
+			if err := scanTask(rows, &t); err != nil {
 				return err
 			}
 			out = append(out, &t)
