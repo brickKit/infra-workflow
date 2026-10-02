@@ -195,3 +195,33 @@ func TestApproveReject_已不是PENDING返回409(t *testing.T) {
 		t.Fatalf("已同意的待办再驳回期望 409，实际 %d：%v", code, body)
 	}
 }
+
+// TestApproveReject_响应是TaskDetail含刚写下的历史：契约里 approve / reject
+// 的 200 响应是 TaskDetail。调用方（PC 详情页、移动端 BFF 的 approveTask /
+// rejectTask）拿响应直接刷新页面，不再多查一次 GET——所以响应里要有处理后的
+// 状态，以及包含这一次动作的审批历史。
+func TestApproveReject_响应是TaskDetail含刚写下的历史(t *testing.T) {
+	svc, r := testService(t)
+	assignee := unique("assignee")
+	eng := engineAs(svc, assignee, "/1/12/")
+
+	for _, tc := range []struct {
+		path, body, status, action, comment string
+	}{
+		{"approve", `{"comment":"同意"}`, repo.StatusApproved, repo.ActionApproved, "同意"},
+		{"reject", `{"comment":"金额不对"}`, repo.StatusRejected, repo.ActionRejected, "金额不对"},
+	} {
+		id := createTask(t, r, assignee, "/1/12/")
+		code, body := do(t, eng, http.MethodPost, "/infra/workflow/tasks/"+id+"/"+tc.path, tc.body)
+		if code != http.StatusOK {
+			t.Fatalf("%s 期望 200，实际 %d：%v", tc.path, code, body)
+		}
+		if body["id"] != id || body["status"] != tc.status {
+			t.Fatalf("%s 之后 id / status 不对：%v / %v", tc.path, body["id"], body["status"])
+		}
+		got := actionsOf(t, body)
+		if len(got) != 1 || got[0]["action"] != tc.action || got[0]["actor_sub"] != assignee || got[0]["comment"] != tc.comment {
+			t.Fatalf("%s 的响应里应该恰好有这一次动作的历史，实际 %v", tc.path, got)
+		}
+	}
+}

@@ -114,19 +114,27 @@ func listHandler(list listFunc, acceptAssignee bool) gin.HandlerFunc {
 
 func getTaskHandler(svc *service.Service) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		t, actions, err := svc.GetTaskDetail(c.Request.Context(), c.Param("id"))
-		if err != nil {
-			_ = c.Error(restStatus(err))
-			return
-		}
-		dto := toTaskDTO(t)
-		actionDTOs := make([]gin.H, 0, len(actions))
-		for _, a := range actions {
-			actionDTOs = append(actionDTOs, toTaskActionDTO(a))
-		}
-		dto["actions"] = actionDTOs
-		c.JSON(http.StatusOK, dto)
+		respondDetail(c, svc, c.Param("id"))
 	}
+}
+
+// respondDetail 回 TaskDetail（Task 的字段 + 审批历史）。GET /tasks/{id} 与
+// approve / reject 的 200 响应都是这个形状（契约）：处理完之后调用方直接拿
+// 响应刷新页面，不必再查一次。处理完再读一遍，而不是拼装事务里的那份内存
+// 副本——那份的 updated_at 还是处理前的值。
+func respondDetail(c *gin.Context, svc *service.Service, taskID string) {
+	t, actions, err := svc.GetTaskDetail(c.Request.Context(), taskID)
+	if err != nil {
+		_ = c.Error(restStatus(err))
+		return
+	}
+	dto := toTaskDTO(t)
+	actionDTOs := make([]gin.H, 0, len(actions))
+	for _, a := range actions {
+		actionDTOs = append(actionDTOs, toTaskActionDTO(a))
+	}
+	dto["actions"] = actionDTOs
+	c.JSON(http.StatusOK, dto)
 }
 
 type actionRequest struct {
@@ -142,12 +150,11 @@ func approveTaskHandler(svc *service.Service) gin.HandlerFunc {
 				return
 			}
 		}
-		t, err := svc.ApproveTask(c.Request.Context(), c.Param("id"), req.Comment)
-		if err != nil {
+		if _, err := svc.ApproveTask(c.Request.Context(), c.Param("id"), req.Comment); err != nil {
 			_ = c.Error(restStatus(err))
 			return
 		}
-		c.JSON(http.StatusOK, toTaskDTO(t))
+		respondDetail(c, svc, c.Param("id"))
 	}
 }
 
@@ -165,11 +172,10 @@ func rejectTaskHandler(svc *service.Service) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
-		t, err := svc.RejectTask(c.Request.Context(), c.Param("id"), req.Comment)
-		if err != nil {
+		if _, err := svc.RejectTask(c.Request.Context(), c.Param("id"), req.Comment); err != nil {
 			_ = c.Error(restStatus(err))
 			return
 		}
-		c.JSON(http.StatusOK, toTaskDTO(t))
+		respondDetail(c, svc, c.Param("id"))
 	}
 }
