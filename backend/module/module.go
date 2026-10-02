@@ -95,7 +95,7 @@ func startOverdueScan(ctx context.Context, svc *service.Service, logger *slog.Lo
 				logger.Error("扫描超期待办失败", "error", err)
 				return
 			}
-			if n < 100 {
+			if n < repo.OverdueBatchSize {
 				return
 			}
 		}

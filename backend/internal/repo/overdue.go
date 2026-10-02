@@ -19,6 +19,10 @@ import (
 // 一批最多处理 100 条（同 outbox pump 的既有节流判据），返回本轮实际
 // 处理的条数——调用方（module.go 的后台循环）据此决定要不要立刻再
 // 跑一轮而不是等下一个 tick（一次扫描不完时快速追上，见 module.go）。
+// OverdueBatchSize 是一次超期扫描最多处理的条数；调用方拿返回值与它比，
+// 判断要不要立刻再扫一轮。
+const OverdueBatchSize = 100
+
 func (r *Repo) MarkOverdueAndPublish(ctx context.Context) (int, error) {
 	var count int
 	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
@@ -26,8 +30,8 @@ func (r *Repo) MarkOverdueAndPublish(ctx context.Context) (int, error) {
 			SELECT id, assignee_sub, due_at FROM workflow_tasks
 			WHERE status = 'PENDING' AND due_at IS NOT NULL AND due_at <= now() AND overdue_notified_at IS NULL
 			ORDER BY due_at
-			LIMIT 100
-			FOR UPDATE SKIP LOCKED`)
+			LIMIT $1
+			FOR UPDATE SKIP LOCKED`, OverdueBatchSize)
 		if err != nil {
 			return err
 		}
