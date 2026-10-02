@@ -9,19 +9,18 @@ import (
 	besdk "github.com/brickKit/be-sdk-go"
 )
 
-// MarkOverdueAndPublish 扫一批 due_at 已过、仍是 PENDING、还没发过超期
-// 事件的待办，标记 overdue_notified_at 并发 infra.workflow.task.
-// overdue.v1（设计计划 §2、§4）。⚠️ 本组件只报告"超期了"，怎么处理
-// （升级/催办/自动通过）归业务组件或 infra-notification（§6.6 铁律一）
-// ——这里绝不修改 status，PENDING 待办超期之后仍然是 PENDING，只是
-// 多了一条事件。
-//
-// 一批最多处理 100 条（同 outbox pump 的既有节流判据），返回本轮实际
-// 处理的条数——调用方（module.go 的后台循环）据此决定要不要立刻再
-// 跑一轮而不是等下一个 tick（一次扫描不完时快速追上，见 module.go）。
 // OverdueBatchSize 是一次超期扫描最多处理的条数；调用方拿返回值与它比，
 // 判断要不要立刻再扫一轮。
 const OverdueBatchSize = 100
+
+// MarkOverdueAndPublish 扫一批 due_at 已过、仍是 PENDING、还没发过超期
+// 事件的待办，标记 overdue_notified_at 并发 infra.workflow.task.overdue.v1。
+// 本组件只报告"超期了"，怎么处理（升级、催办、自动通过）是业务组件或通知
+// 中心的事——这里绝不修改 status：超期的待办仍是 PENDING，只是多了一条事件。
+//
+// FOR UPDATE SKIP LOCKED 认领：多个副本（或外壳与独立部署同时在跑）一起扫时，
+// 同一条待办只会被一个事务锁住、只发一次事件，别的事务跳过它扫下一批。
+// 返回本轮实际处理的条数。
 
 func (r *Repo) MarkOverdueAndPublish(ctx context.Context) (int, error) {
 	var count int

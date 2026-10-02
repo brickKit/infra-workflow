@@ -5,5 +5,5 @@ import (
 	"github.com/brickKit/infra-workflow/v2/backend/module"
 )
 
-// ⚠️ 这个文件永远只有这一行（§12.5.3、决策 109）。
+// 独立运行的入口只有这一行：装配全在 module.New 里，进外壳时外壳调同一个 New。
 func main() { besdk.RunStandalone(module.New) }

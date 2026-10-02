@@ -1,7 +1,6 @@
-// Package partition 是 Module.Start 的后台循环之一：为 event_outbox
-// 自动创建未来的周分区（决策 54、§11.5.1）——同 erp-sales/erp-finance 等
-// 组件复用的同一套判据，本组件只有一张分区表（没有 event_inbox，铁律三：
-// 零消费）。
+// Package partition 是 Module.Start 的后台循环之一：为 event_outbox 自动创建
+// 未来的周分区。本组件只有这一张分区表（不消费事件，没有 event_inbox）。
+// 分区不存在时写入直接失败，所以要提前建好。
 package partition
 
 import (
@@ -22,7 +21,7 @@ const (
 var weeklyPartitionedTables = []string{"event_outbox"}
 
 // Start 立刻检查一次，之后每 24 小时检查一次。单次检查失败只记日志，
-// 不让整个循环退出（§13.3 铁律七）。
+// 不让整个循环退出：循环一退，之后就再也没人建分区。
 func Start(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Logger) error {
 	if err := ensureAllWeekly(ctx, db, role, schema); err != nil {
 		logger.Error("周分区维护失败", "error", err)
@@ -67,8 +66,9 @@ func mondayOf(t time.Time) time.Time {
 	return d.AddDate(0, 0, -(weekday - 1))
 }
 
-// ensurePartition 用 to_regclass 先确认分区存不存在，不存在才建——不能
-// 反过来"先建、报 already exists 就忽略"（同其它组件已经踩过的教训）。
+// ensurePartition 用 to_regclass 先确认分区存不存在，不存在才建。不能反过来
+// "先建、报 already exists 就忽略"：报错会让整个事务进入 aborted 状态，同一
+// 事务里后面的分区全都建不了。
 func ensurePartition(ctx context.Context, tx *sql.Tx, table string, from, to time.Time) error {
 	name := fmt.Sprintf("%s_%s", table, from.Format("2006_01_02"))
 

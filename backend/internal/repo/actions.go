@@ -13,12 +13,11 @@ import (
 
 // transitionTaskTx 是 approve/reject/close/cancel 四个动作共用的核心：
 // 锁行、校验仍是 PENDING、更新状态、记一条 workflow_task_actions。
-// ⚠️ 统一策略：不管走 REST（人点按钮）还是 gRPC（业务组件调
-// CloseTask/CancelTask），对一个已经不是 PENDING 的任务再次动作都
-// 返回 ErrNotPending——不做"静默忽略"，claim-first 已经在更上一层
-// 保证了"同一个 idempotency_key 重放"不会走到这里；真的走到这里却
-// 状态不对，说明调用方拿错了 task_id 或者有并发的另一个动作抢先了，
-// 两种情况都值得报错而不是悄悄吞掉。
+// 不管走 REST（人点按钮）还是 gRPC（业务组件调 CloseTask / CancelTask），
+// 对一个已经不是 PENDING 的待办再次动作都返回 ErrNotPending，不"静默忽略"：
+// 同一个 idempotency_key 的重放在更上一层（claim-first）就短路了，走不到这里；
+// 真走到这里却状态不对，说明调用方拿错了 task_id，或者并发的另一个动作抢先
+// 了，两种情况都该报错。
 func transitionTaskTx(ctx context.Context, tx *sql.Tx, id int64, newStatus, action, actorSub, comment string) (*Task, error) {
 	var t Task
 	row := tx.QueryRowContext(ctx, taskSelectColumns+` FROM workflow_tasks WHERE id = $1 FOR UPDATE`, id)
@@ -64,8 +63,8 @@ func publishTaskCompleted(tx *sql.Tx, schema string, t *Task, action, actorSub, 
 	})
 }
 
-// ApproveTask：人点"同意"。REST 面用，没有 idempotency_key——双击/
-// 重复提交靠"已经不是 PENDING 就报 409"这条路径本身天然挡住。
+// ApproveTask：人点"同意"。REST 面用，没有 idempotency_key：双击、重复提交
+// 由"已经不是 PENDING 就报 ErrNotPending（REST 409）"挡住。
 func (r *Repo) ApproveTask(ctx context.Context, taskID, actorSub, comment string) (*Task, error) {
 	id, err := parseTaskID(taskID)
 	if err != nil {
@@ -86,8 +85,8 @@ func (r *Repo) ApproveTask(ctx context.Context, taskID, actorSub, comment string
 	return result, wrap("同意待办", err)
 }
 
-// RejectTask：人点"驳回"（附言由 http 层的请求体绑定强制要求非空，
-// 见设计计划 §3 的 REST 表——那是入参形状校验，不属于这一层的职责）。
+// RejectTask：人点"驳回"。附言非空由 http 层的请求体绑定与 service 层校验
+// 保证，这一层不重复。
 func (r *Repo) RejectTask(ctx context.Context, taskID, actorSub, comment string) (*Task, error) {
 	id, err := parseTaskID(taskID)
 	if err != nil {
@@ -114,9 +113,10 @@ type CloseTaskInput struct {
 	Comment        string
 }
 
-// CloseTask 由业务组件主动关闭 exception 任务——claim-first 幂等
-// （设计计划 §1.1、§3.1）。⚠️ task_id 必须由调用方带来，idempotency_key
-// 只保证这次关闭命令本身重放安全（同 CloseTaskRequest 的契约注释）。
+// CloseTask：业务组件主动关闭待办（典型是 exception：人在业务界面改好数据、
+// 重新提交成功之后），claim-first 幂等。task_id 必须由调用方带来——它从
+// CreateTask 的返回值起就一直持有；idempotency_key 只保证这一次关闭命令本身
+// 重放安全，不用来反查该关哪条待办。
 func (r *Repo) CloseTask(ctx context.Context, in CloseTaskInput) (*Task, error) {
 	id, err := parseTaskID(in.TaskID)
 	if err != nil {
@@ -136,8 +136,7 @@ func (r *Repo) CloseTask(ctx context.Context, in CloseTaskInput) (*Task, error) 
 		if err != nil {
 			return err
 		}
-		// actor_sub 留空——CloseTask 由业务组件发起，没有真实用户
-		// （设计计划 §2 的 workflow_task_actions.actor_sub 注释）。
+		// actor_sub 留空：CloseTask 由业务组件发起，没有真实用户。
 		if err := publishTaskCompleted(tx, r.schema, t, "RESOLVED", "", in.Comment); err != nil {
 			return err
 		}
@@ -156,9 +155,9 @@ type CancelTaskInput struct {
 	Reason         string
 }
 
-// CancelTask：来源单据作废，待办跟着作废（设计计划 §3）。⚠️ 发的是
-// infra.workflow.task.cancelled.v1，不是 task.completed.v1——两条是
-// 设计计划 §4 事件表里独立的两条 subject，不能合并。
+// CancelTask：来源单据作废，待办跟着作废。发的是
+// infra.workflow.task.cancelled.v1，不是 task.completed.v1：两条是独立的
+// subject，监听 completed 推进单据的业务组件不该把"作废"当成"审完了"。
 func (r *Repo) CancelTask(ctx context.Context, in CancelTaskInput) (*Task, error) {
 	id, err := parseTaskID(in.TaskID)
 	if err != nil {
@@ -203,11 +202,10 @@ func (r *Repo) CancelTask(ctx context.Context, in CancelTaskInput) (*Task, error
 	return r.GetTask(ctx, resultID)
 }
 
-// GetTaskStatus 支持按 task_id 或 idempotency_key 二选一查——超时恰恰
-// 是唯一拿不到 task_id 的场景（设计计划 §3.1 ⭐，erp-inventory 阶段二
-// 用真机故障注入测试换来的教训）。NOT_FOUND 与 CANCELLED 不许合并
-// 成一个"没有"：前者说明请求根本没到（可安全重试），后者说明已被
-// 作废（重试是错的）。
+// GetTaskStatus 支持按 task_id 或 idempotency_key 二选一查：CreateTask 超时
+// 恰恰是调用方拿不到 task_id 的场景，那时它手里只有自己生成的
+// idempotency_key。NOT_FOUND 与 CANCELLED 不许合并成一个"没有"：前者说明
+// 请求根本没到（可以安全重试），后者说明已被作废（重试是错的）。
 func (r *Repo) GetTaskStatus(ctx context.Context, taskID, idempotencyKey string) (status, resolvedTaskID string, err error) {
 	if taskID == "" && idempotencyKey == "" {
 		return "", "", fmt.Errorf("%w: task_id 与 idempotency_key 不能同时为空", ErrInvalidArgument)
@@ -223,9 +221,9 @@ func (r *Repo) GetTaskStatus(ctx context.Context, taskID, idempotencyKey string)
 				return lookupErr
 			}
 			if resultID == "" {
-				// 已经声明但还没 finalize（同一事务里正在处理，或者
-				// claim 之后处理失败——不管哪种，"还没有结果"本身就是
-				// NOT_FOUND 的语义，不该报成某个具体状态）。
+				// 已经声明但还没有结果：声明与写入在同一个事务里，提交前
+				// 别的事务看不到这一行，所以这里实际很少走到；万一走到，
+				// "还没有结果"就是 NOT_FOUND 的语义，不报成某个具体状态。
 				return nil
 			}
 			id = resultID
@@ -258,8 +256,7 @@ type TaskAction struct {
 	CreatedAt time.Time
 }
 
-// ListTaskActions 按时间顺序返回一个待办的全部审批历史（只增不改，
-// 设计计划 §2）。
+// ListTaskActions 按时间顺序返回一个待办的全部审批历史（只增不改）。
 func (r *Repo) ListTaskActions(ctx context.Context, taskID string) ([]TaskAction, error) {
 	id, err := parseTaskID(taskID)
 	if err != nil {

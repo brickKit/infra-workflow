@@ -29,8 +29,8 @@ const (
 	ActionCancelled = "CANCELLED"
 )
 
-// Task 是待办主体。Summary 保留原始 JSON 字节，不在这一层反解——本组件
-// 只透传展示快照，不理解它的内容（设计计划 §1.2 第三行）。
+// Task 是待办主体。Summary 保留原始 JSON 字节，不在这一层反解：它是调用方
+// 在 CreateTask 时给的展示快照，本组件只透传、不理解它的内容。
 type Task struct {
 	ID               int64
 	Type             string
@@ -63,13 +63,12 @@ type CreateTaskInput struct {
 	DueAt            *time.Time
 }
 
-// InScope 判断这条待办对某个调用者是否可见——assignee_dept_path 前缀
-// 命中（org 维）或 assignee_sub 精确命中（owner 维）任一为真就算可见
-// （同 erp-sales Order.InScope 的既有判据）。⚠️ 只用于单条待办的可见性
-// 校验（GetTaskDetail 这类"已经拿到 id、判断这个人能不能看"的场景），
-// 不用于列表查询——"我的待办"列表刻意只用 owner 维精确匹配，不会因为
-// 恰好命中 org 维就把下属的待办也列出来（那是 GET /admin/tasks 的职责，
-// 见 ListInput.ViewMine 的注释）。
+// InScope 判断这条待办对某个调用者是否可见：assignee_dept_path 前缀命中
+// （org 维）或 assignee_sub 精确命中（owner 维）任一为真就算可见。用于单条
+// 待办（GetTaskDetail：已经拿到 id、判断这个人能不能看）；"我的待办"列表在
+// SQL 里用同一个 OR 判据（见 ListInput）。两个操作数都来自调用者自己的
+// ScopeOf：dept_path 为空的人（坐在部门树根节点）前缀匹配一切，是 SDK 定义
+// 的"不限"，不是漏填。
 func (t *Task) InScope(scopePrefix, scopeOwner string) bool {
 	return strings.HasPrefix(t.AssigneeDeptPath, scopePrefix) || t.AssigneeSub == scopeOwner
 }
@@ -84,9 +83,9 @@ func parseTaskID(s string) (int64, error) {
 	return id, nil
 }
 
-// CreateTask 登记一条待办——claim-first 幂等（设计计划 §3.1）。事件
-// infra.workflow.task.created.v1 与写入在同一个事务里发布（Outbox
-// Pattern，设计计划 §3.10）。
+// CreateTask 登记一条待办，claim-first 幂等（见 claimIdempotency）。事件
+// infra.workflow.task.created.v1 与写入在同一个事务里进 Outbox：写成功就一定
+// 有事件，回滚就一定没有。
 func (r *Repo) CreateTask(ctx context.Context, in CreateTaskInput) (*Task, error) {
 	var taskID int64
 	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
@@ -146,9 +145,9 @@ func (r *Repo) CreateTask(ctx context.Context, in CreateTaskInput) (*Task, error
 	return r.GetTask(ctx, taskIDString(taskID))
 }
 
-// GetTask 按 task_id 查详情。⚠️ 不做数据权限过滤——那是 http 层
-// ScopeOf 的责任（同 erp-sales GetOrder 的既有判据：repo 层只管
-// "这行存不存在"，调用方决定"这行该不该被这个人看见"）。
+// GetTask 按 task_id 查详情，不做数据范围过滤：repo 层只管"这行存不存在"，
+// "该不该被这个人看见"由 service 层按 ScopeOf 判断（gRPC 的组件间调用没有
+// 用户身份，同样走这里）。
 func (r *Repo) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	id, err := parseTaskID(taskID)
 	if err != nil {
@@ -167,8 +166,8 @@ func (r *Repo) GetTask(ctx context.Context, taskID string) (*Task, error) {
 	return &t, nil
 }
 
-// BatchGetTasks 是防 N+1 的唯一合法批量读方式（§3.8）。查不到的 id
-// 直接在结果里省略，不报错（同 batchGet 惯例）。
+// BatchGetTasks 是给调用方防 N+1 的批量读：一次请求按一组 id 取回。查不到的
+// id 直接在结果里省略，不报错。
 func (r *Repo) BatchGetTasks(ctx context.Context, taskIDs []string) ([]*Task, error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
@@ -177,7 +176,7 @@ func (r *Repo) BatchGetTasks(ctx context.Context, taskIDs []string) ([]*Task, er
 	for _, s := range taskIDs {
 		id, err := parseTaskID(s)
 		if err != nil {
-			continue // 不合法的 id 当"查不到"处理，不报错（同 batchGet 惯例）
+			continue // 不合法的 id 当"查不到"处理，不报错
 		}
 		ids = append(ids, id)
 	}
@@ -200,26 +199,23 @@ func (r *Repo) BatchGetTasks(ctx context.Context, taskIDs []string) ([]*Task, er
 	return out, wrap("批量查待办", err)
 }
 
-// ListInput 是 ListTasks 的查询参数。ScopePrefix/ScopeOwner 由调用方
-// （service 层）从 besdk.ScopeOf(ctx) 取真实值传入——repo 层不认识
-// JWT，只认识两个字符串（同 erp-sales ListInput 的既有判据）。
+// ListInput 是 ListTasks 的查询参数。ScopePrefix / ScopeOwner 由 service 层
+// 从 besdk.ScopeOf(ctx) 取真实值传入：repo 层不认识 JWT，只认识两个字符串。
 type ListInput struct {
 	Type            string // 空 = 不筛
 	Status          string // 空 = 不筛
 	SourceComponent string // 空 = 不筛
 	// GET /infra/workflow/tasks（"我的待办"，AdminView=false）：assignee_sub
-	// = ScopeOwner **OR** assignee_dept_path 前缀匹配 ScopePrefix——两维
-	// 都来自调用者自己的 besdk.ScopeOf(ctx)，OR 是刻意的（契约
-	// workflow.openapi.yaml 明文："只看得到指派给自己、或指派给自己下属
-	// 部门某人的待办"）：看得见自己的，也看得见自己管辖部门内所有人的，
-	// 同 Task.InScope 单条校验用的同一个判据，只是这里用在列表查询上。
+	// = ScopeOwner OR assignee_dept_path 前缀匹配 ScopePrefix。OR 是契约写明的
+	// （"只看得到指派给自己、或指派给自己下属部门某人的待办"），与 Task.InScope
+	// 是同一个判据。两个操作数都必须来自调用者真实的 ScopeOf：任何一个留空，
+	// 前缀匹配退化成"匹配一切"，整个 OR 就是人人看到全部。
 	//
-	// GET /infra/workflow/admin/tasks（AdminView=true）：不判 ScopeOwner，
-	// 只判 ScopePrefix（"绕过 owner 维但不绕过 org 维"，管理员看的是本
-	// 组织范围内的全部待办，不是全租户）；可选再叠加 AssigneeSub 做进一
-	// 步的精确narrow-down（契约里 admin 端点独有的 assignee_sub 查询参数，
-	// 这是管理员显式指定要查的某个人，与 ScopeOwner 语义不同——后者恒等
-	// 于调用者自己）。
+	// GET /infra/workflow/admin/tasks（AdminView=true）：不判 ScopeOwner，只判
+	// ScopePrefix——绕过 owner 维、不绕过 org 维，管理员看的是自己部门范围内
+	// 的全部待办，不是全租户；可选再叠加 AssigneeSub（管理员显式指定要看的
+	// 某个人，与恒等于调用者自己的 ScopeOwner 不是一回事）。gRPC 的 ListTasks
+	// 也走这一支、ScopePrefix 留空：组件间调用没有用户身份，看全部。
 	AdminView   bool
 	ScopeOwner  string // AdminView=false 时用，来自 besdk.ScopeOf(ctx).Owner
 	ScopePrefix string // 两种视图都用，来自 besdk.ScopeOf(ctx).Prefix
@@ -252,10 +248,9 @@ func scanTask(row rowScanner, t *Task) error {
 	return nil
 }
 
-// ListTasks 按 assignee/状态/来源筛，走 ScopeFilter（设计计划 §3）。
-// ⚠️ ScopePrefix 为空是"查全部"（站在部门树根节点的人看得到全部，同
-// erp-sales order.go 的既有判据），这条不是 bug，是前缀匹配的自然结果——
-// 两种视图（AdminView 与否）都成立，因为都会用到 ScopePrefix。
+// ListTasks 按类型 / 状态 / 来源与数据范围筛，按 id 游标分页。ScopePrefix
+// 为空是"查全部"（坐在部门树根节点的人看得到全部），是前缀匹配的自然结果，
+// 不是 bug；所以 service 层绝不能在 REST 路径上把它留空。
 func (r *Repo) ListTasks(ctx context.Context, in ListInput) ([]*Task, string, error) {
 	pageSize := in.PageSize
 	if pageSize <= 0 || pageSize > 200 {
@@ -285,10 +280,8 @@ func (r *Repo) ListTasks(ctx context.Context, in ListInput) ([]*Task, string, er
 	if in.SourceComponent != "" {
 		query += ` AND source_component = ` + arg(in.SourceComponent)
 	}
-	// AdminView 决定判不判 ScopeOwner（见 ListInput 字段注释）。⚠️ LIKE 的
-	// '%' 拼在 SQL 里而不是 Go 里拼进参数值——同 erp-sales order.go 的既
-	// 有写法，ScopePrefix 为空字符串时 `LIKE '' || '%'` 等价于 `LIKE '%'`，
-	// 天然对应"站在部门树根节点的人看得到全部"。
+	// AdminView 决定判不判 ScopeOwner（见 ListInput 字段注释）。LIKE 的 '%'
+	// 拼在 SQL 里、不拼进参数值：参数只是调用者的 dept_path 原文。
 	if in.AdminView {
 		query += ` AND assignee_dept_path LIKE ` + arg(in.ScopePrefix) + ` || '%'`
 		if in.AssigneeSub != "" {

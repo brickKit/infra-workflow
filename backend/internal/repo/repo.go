@@ -1,7 +1,7 @@
 // Package repo 是 infra-workflow 的数据访问层：待办主体、审批历史、
-// 写命令幂等声明。三条铁律（设计计划 §6.6）在这一层的体现是"零表连
-// 业务库"——本组件只存自己的三张表 + 标准 Outbox，没有一处 join 或
-// 回查任何业务组件的 schema。
+// 写命令幂等声明。本组件不判业务规则、不查业务库：这一层只读写自己的三张表
+// 与 Outbox，没有一处 join 或回查任何业务组件的 schema——待办要展示的业务
+// 字段由调用方在 CreateTask 时作为快照传进来。
 package repo
 
 import (
@@ -10,19 +10,17 @@ import (
 	"fmt"
 )
 
-// ── 哨兵错误。grpc/http 两层通过 service.ToStatus 统一映射（同
-// infra-authz/erp-finance 的既有判据）。────────────────────────────────
+// ── 哨兵错误。grpc / http 两层通过 service.ToStatus 统一映射。──────────
 
 var ErrNotFound = errors.New("not found")
 var ErrInvalidArgument = errors.New("参数不合法")
 
-// ErrNotPending：对一个已经不是 PENDING 的待办调 approve/reject——
-// 幂等意义上的"晚了一步"，不是系统错误（设计计划 §3 的 409 语义）。
+// ErrNotPending：对一个已经不是 PENDING 的待办再做 approve / reject /
+// close / cancel——"晚了一步"（别人或自己已经处理过），不是系统错误。
 var ErrNotPending = errors.New("待办已经不是 PENDING 状态")
 
-// ErrForbidden：这条待办真实存在，调用者只是看不见/不能动它——同
-// erp-sales/erp-inventory 的既有判据，与 ErrNotFound 语义不同，不能混用
-// （service.checkTaskInScope 用它标记"越权"，不是"不存在"）。
+// ErrForbidden：这条待办真实存在，调用者只是看不见 / 不能动它。与
+// ErrNotFound 不能混用：前端对 403 与 404 的提示不同。
 var ErrForbidden = errors.New("无权访问该待办")
 
 type Repo struct {

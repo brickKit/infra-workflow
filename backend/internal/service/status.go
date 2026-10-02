@@ -8,14 +8,11 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// ToStatus 把 repo 层的哨兵错误翻成 gRPC status——HTTP 与 gRPC 两条对外
-// 接口共用同一套业务错误类型（同 erp-inventory/erp-sales/infra-authz 的
-// 判据）。
+// ToStatus 把 repo 层的哨兵错误翻成 gRPC status，HTTP 与 gRPC 两个面共用。
 //
-// ⚠️ ErrNotPending → FailedPrecondition：对一个已经不是 PENDING 的待办
-// 再次 approve/reject/close/cancel，是"状态不对"，不是"这个东西不存在"
-// 也不是"参数写错了"（同 erp-inventory ErrInsufficientStock 的判据：
-// RowsAffected 类冲突统一映射到 FailedPrecondition）。
+// ErrNotPending → FailedPrecondition：对一个已经不是 PENDING 的待办再次
+// close / cancel，是"状态不满足前提"，不是"不存在"也不是"参数写错了"。
+// REST 面对这一个错误另有翻译（409，见 http 包的 restStatus）。
 func ToStatus(err error) error {
 	if err == nil {
 		return nil

@@ -1,8 +1,8 @@
-// Package http 是 infra-workflow 的 REST 面（对外路径前缀
-// /infra/workflow，与 assembly.yaml 的 edge_routes 一致）。⚠️
-// CreateTask/CloseTask/CancelTask 永远不进 REST——它们只走 gRPC，是
-// 组件间协议，不是人类操作（contracts/workflow.openapi.yaml 顶部的
-// 三条铁律警告；同 erp-inventory TCC 三件套的既有判据）。
+// Package http 是 infra-workflow 的 REST 面（对外路径前缀 /infra/workflow，
+// 与 assembly.yaml 的 edge_routes 一致），给人用：看待办、同意、驳回。
+// CreateTask / CloseTask / CancelTask 永远不进 REST：它们是业务组件之间的
+// 协议。人能"创建待办"只可能是"人代表某个业务组件创建"，那等于给了一条
+// 绕过业务规则的路。
 package http
 
 import (
@@ -21,8 +21,8 @@ import (
 	"github.com/brickKit/infra-workflow/v2/backend/internal/service"
 )
 
-// RegisterRoutes 挂载业务路由——三个权限键均来自 assembly.yaml 的
-// permissions 段，一字不差（漏写编译不过，见 besdk.GET/POST 的签名）。
+// RegisterRoutes 挂载业务路由。三个权限键与 assembly.yaml 的 permissions 段
+// 一字不差；besdk.GET / POST 要求带权限键，漏写编译不过。
 func RegisterRoutes(eng *gin.Engine, svc *service.Service) {
 	g := eng.Group("/infra/workflow")
 	besdk.GET(g, "/tasks", "infra.workflow.task.view", listHandler(svc.ListMyTasks, false))
@@ -46,9 +46,8 @@ func restStatus(err error) error {
 
 const rfc3339 = "2006-01-02T15:04:05.999999999Z07:00"
 
-// toTaskDTO 的 id 字段必须序列化成字符串——contracts/workflow.openapi.yaml
-// 的 Task.id 是 string（同 CreateTaskRequest 等 proto 消息里 task_id 一律
-// string 的既有约定），t.ID 在 repo 层是 BIGINT，这里转一次。
+// toTaskDTO 的 id 序列化成字符串：契约里 Task.id 是 string（proto 里 task_id
+// 也一律是 string），t.ID 在 repo 层是 BIGINT，这里转一次。
 func toTaskDTO(t *repo.Task) gin.H {
 	dto := gin.H{
 		"id": strconv.FormatInt(t.ID, 10), "type": t.Type, "status": t.Status,
@@ -66,9 +65,8 @@ func toTaskDTO(t *repo.Task) gin.H {
 	return dto
 }
 
-// jsonRawOrNull 把 Summary（原始 JSON 字节，本组件不反解，见 repo.Task
-// 注释）原样嵌进响应体——用 json.RawMessage 让 gin 的 JSON 编码器直接
-// 透传字节，不重新序列化一遍。
+// jsonRawOrNull 把 Summary（原始 JSON 字节，本组件不反解）原样嵌进响应体：
+// json.RawMessage 让 gin 的 JSON 编码器直接透传字节，不重新序列化一遍。
 func jsonRawOrNull(raw []byte) any {
 	if len(raw) == 0 {
 		return nil
@@ -158,9 +156,9 @@ func approveTaskHandler(svc *service.Service) gin.HandlerFunc {
 	}
 }
 
-// rejectTaskHandler 的附言用 binding:"required" 强制非空——http 层的
-// 请求体绑定校验（同设计计划 §3 的 REST 表：驳回必须带附言，与
-// service.RejectTask 的兜底校验是两道防线，不是重复劳动）。
+// rejectRequest 的附言用 binding:"required" 强制非空：驳回必须说明理由，
+// 发起人才知道该改什么。service.RejectTask 另有一道同样的校验，给不经过
+// 这个绑定的调用方。
 type rejectRequest struct {
 	Comment string `json:"comment" binding:"required"`
 }

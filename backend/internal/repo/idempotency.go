@@ -6,12 +6,11 @@ import (
 	"fmt"
 )
 
-// claimIdempotency 尝试声明一个写命令——claim-first（同 erp-inventory
-// 的既有先例，比"先查后插"强）：先原子 INSERT ... ON CONFLICT DO
-// NOTHING 声明，声明成功（claimed=true）才做真正的写；声明失败说明
-// 这个 idempotency_key 已经被处理过（或正在被并发的另一个请求处理，
-// 那个请求会阻塞在同一行的写锁上直到先到的事务提交/回滚，不会出现
-// 两边都"以为自己是第一次"的窗口）。
+// claimIdempotency 尝试声明一个写命令（claim-first）：先原子地
+// INSERT ... ON CONFLICT DO NOTHING 声明，声明成功（claimed=true）才做真正的
+// 写；声明失败说明这个 idempotency_key 已经被处理过。并发的同一个 key 会阻塞
+// 在同一行的写锁上，直到先到的事务提交或回滚，不会两边都"以为自己是第一次"。
+// "先查再插"在并发下有窗口，两个同 key 的请求可能各建一条待办。
 func claimIdempotency(ctx context.Context, tx *sql.Tx, key, command string) (claimed bool, err error) {
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO command_idempotency (idempotency_key, command) VALUES ($1, $2)

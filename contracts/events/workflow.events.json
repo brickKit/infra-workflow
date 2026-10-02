@@ -1,17 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "infra-workflow 事件清单",
-  "note": "Schema 演进铁律：只增不删不改（决策 19）。消费者宽容反序列化。⚠️ 三条全部标核心不标旁路的那三条（created/completed/cancelled）：漏一条 completed 的后果是业务单据永远停在'审批中'且没有任何报错——审批的人明明点了同意，单子就是不动（设计计划 §4）。本组件不消费任何事件（一条都不），见设计计划 §4 消费表与 §6.6 铁律三。",
+  "note": "Schema 只增不删不改；消费者宽容反序列化（不认识的字段忽略）。created / completed / cancelled 三条标核心：漏一条 completed，业务单据就永远停在'审批中'而没有任何报错——审批的人明明点了同意，单子就是不动。本组件不消费任何事件：消费业务事件就等于在这里建立'哪个事件关掉哪条待办'的业务规则。",
   "envelope": {
-    "description": "所有事件共用的信封。三个 Header 字段由 be-sdk 自动填/校验（§3.10）",
+    "description": "所有事件共用的信封。trace_id / causation_id / hop_count 三个 Header 字段由 be-sdk 自动填写与校验",
     "required": ["subject", "aggregate_id", "version", "trace_id", "causation_id", "hop_count", "occurred_at"],
     "properties": {
       "subject":      { "type": "string", "pattern": "^[a-z]+\\.[a-z-]+\\.[a-z-]+\\.v[0-9]+$" },
       "aggregate_id": { "type": "string" },
-      "version":      { "type": "integer", "description": "消费者只在严格大于本地当前值时更新（决策 43）" },
+      "version":      { "type": "integer", "description": "消费者只在严格大于本地当前值时更新，乱序到达的旧事件被忽略" },
       "trace_id":     { "type": "string" },
       "causation_id": { "type": "string" },
-      "hop_count":    { "type": "integer", "maximum": 5, "description": "> 5 直接丢弃进 DLQ（决策 42）" },
+      "hop_count":    { "type": "integer", "maximum": 5, "description": "> 5 直接丢弃进 DLQ，防止事件在组件之间无限循环" },
       "occurred_at":  { "type": "string", "format": "date-time" }
     }
   },
@@ -37,7 +37,7 @@
     {
       "subject": "infra.workflow.task.completed.v1",
       "grade": "core",
-      "note": "审批完成（同意/驳回）或 exception 被 CloseTask 关闭时发。⭐ 这是本组件回话给业务组件的唯一通道（设计计划 §1.1、§4）——业务组件据此决定自己那张单据接下来该怎么变，本组件不知道也不该知道。",
+      "note": "审批完成（同意/驳回）或 exception 被 CloseTask 关闭时发。这是本组件回话给业务组件的唯一通道——业务组件据此决定自己那张单据接下来该怎么变，本组件不知道也不该知道。",
       "payload": {
         "type": "object",
         "required": ["task_id", "action", "source_component", "source_aggregate", "source_id"],
@@ -71,7 +71,7 @@
     {
       "subject": "infra.workflow.task.overdue.v1",
       "grade": "peripheral",
-      "note": "due_at 到点仍是 PENDING 时发。本组件只报告'超期了'，怎么处理（升级/催办/自动通过）归业务组件或通知中心，不归本组件（设计计划 §2、§6.6 铁律一）。",
+      "note": "due_at 到点仍是 PENDING 时发，每条待办只发一次。本组件只报告'超期了'，怎么处理（升级/催办/自动通过）归业务组件或通知中心；待办的状态不变。",
       "payload": {
         "type": "object",
         "required": ["task_id", "assignee_sub", "due_at"],

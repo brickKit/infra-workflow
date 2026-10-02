@@ -1,6 +1,5 @@
-// Package grpc 实现 infra.workflow.v1.WorkflowService——内部 gRPC 面
-// （§2.1）。HTTP 与 gRPC 共用同一个 service.Service，业务逻辑只写一遍
-// （同 erp-inventory/infra-authz 的既有判据）。
+// Package grpc 实现 infra.workflow.v1.WorkflowService：业务组件调本组件的
+// 组件间协议。HTTP 与 gRPC 共用同一个 service.Service，业务逻辑只写一遍。
 package grpc
 
 import (
@@ -61,8 +60,8 @@ func toProtoStatus(s string) workflowv1.TaskStatus {
 	case repo.StatusCancelled:
 		return workflowv1.TaskStatus_TASK_STATUS_CANCELLED
 	default:
-		// ⚠️ UNSPECIFIED 就是 NOT_FOUND 的信号，不是"忘了填"（同
-		// erp-inventory ReservationStatus 的既有判据，设计计划 §3.1）。
+		// UNSPECIFIED 就是 NOT_FOUND 的信号，不是"忘了填"：GetTaskStatus 查不到
+		// 时状态为空串，落到这里。调用方据此区分"请求根本没到，可以安全重试"。
 		return workflowv1.TaskStatus_TASK_STATUS_UNSPECIFIED
 	}
 }

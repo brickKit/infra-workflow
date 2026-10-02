@@ -1,9 +1,6 @@
-// Package service 是 infra-workflow 的业务规则层：入参校验 + 给 http/grpc
-// 一个不依赖 repo 内部细节的稳定入口（同 erp-inventory/erp-sales 的判据）。
-// 真正的事务、claim-first 幂等、事件发布都在 repo 层随 SQL 一起做，这一层
-// 依然薄——它只多做一件 repo 层不该做的事：数据权限的可见性/归属校验
-// （repo.GetTask 的注释："不做数据权限过滤——那是 http 层 ScopeOf 的
-// 责任"，这一层就是那个"http 层"，gRPC 面的编排也走这里共用同一套）。
+// Package service 是 http 与 grpc 共用的一层：入参校验，以及 repo 层不做的
+// 数据范围判断（谁看得见、谁能处理）。事务、claim-first 幂等、事件发布都在
+// repo 层随 SQL 一起做，这一层保持薄。
 package service
 
 import (
@@ -27,9 +24,8 @@ func New(r *repo.Repo, logger *slog.Logger) *Service {
 	return &Service{repo: r, logger: logger}
 }
 
-// ── 命令：CreateTask/CloseTask/CancelTask（组件间协议，不暴露到 REST，
-// 见 workflow.proto 顶部的三条铁律警告——调用方是已验证过自己权限的
-// 业务组件，这一层不做数据权限校验，只做入参形状校验）──
+// ── 命令：CreateTask / CloseTask / CancelTask（组件间协议，不进 REST）。
+// 调用方是业务组件，没有用户身份；这一层只校验入参形状，不判数据范围。──
 
 func (s *Service) CreateTask(ctx context.Context, in repo.CreateTaskInput) (*repo.Task, error) {
 	if in.IdempotencyKey == "" {
@@ -85,33 +81,29 @@ func (s *Service) CancelTask(ctx context.Context, in repo.CancelTaskInput) (*rep
 	return t, nil
 }
 
-// GetTaskStatus 的二选一校验已经在 repo 层做了（同一处判断没必要写两遍），
-// 这一层直接透传。
+// GetTaskStatus 的二选一校验在 repo 层，这一层直接透传。
 func (s *Service) GetTaskStatus(ctx context.Context, taskID, idempotencyKey string) (status, resolvedTaskID string, err error) {
 	return s.repo.GetTaskStatus(ctx, taskID, idempotencyKey)
 }
 
-// BatchGetTasks 是组件间协议（防 N+1），不经过 besdk.RequirePermission，
-// ctx 里没有 Claims——同 erp-inventory BatchGetBalance 的既有判据，不做
-// 数据权限过滤。
+// BatchGetTasks 是组件间协议（防 N+1）：不经过 besdk.RequirePermission，ctx
+// 里没有 Claims，不做数据范围过滤。
 func (s *Service) BatchGetTasks(ctx context.Context, taskIDs []string) ([]*repo.Task, error) {
 	return s.repo.BatchGetTasks(ctx, taskIDs)
 }
 
-// ListTasks 是 gRPC 面的 WorkflowService.ListTasks——同 BatchGetTasks，
-// 组件间协议不做数据权限过滤（本项目目前没有任何组件在 gRPC 侧转发/
-// 验证 JWT，见 workflow.proto 该 rpc 的注释）。人类操作的两维过滤是
-// ListMyTasks/ListTasksAdmin 的职责，只在 REST 面生效。
+// ListTasks 是 gRPC 面的 WorkflowService.ListTasks。同 BatchGetTasks：组件间
+// 调用不带用户身份（gRPC 侧不转发、不验 JWT），不做数据范围过滤；在这里调
+// besdk.ScopeOf 会 panic。人看的两维过滤是 ListMyTasks / ListTasksAdmin 的事，
+// 只在 REST 面生效。
 func (s *Service) ListTasks(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error) {
 	in.AdminView = true // 借用"只判 ScopePrefix"这条分支；ScopePrefix 留空 = 看全部
 	return s.repo.ListTasks(ctx, in)
 }
 
-// ── 读 + 写：REST 面用，走 besdk.ScopeOf(ctx)（人类操作，有已验签 Claims）──
+// ── 读 + 写：REST 面用，走 besdk.ScopeOf(ctx)（人的操作，ctx 里有验过签的 Claims）──
 
-// checkTaskInScope 是 GetTaskDetail 共用的一步：先按 id 查出这条待办，
-// 再判断调用者是否在它的可见范围内（同 erp-sales checkOrderInScope 的
-// 既有判据）。
+// checkTaskInScope：先按 id 查出这条待办，再判断调用者是否在它的可见范围内。
 func (s *Service) checkTaskInScope(ctx context.Context, taskID string) (*repo.Task, error) {
 	t, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
@@ -124,11 +116,9 @@ func (s *Service) checkTaskInScope(ctx context.Context, taskID string) (*repo.Ta
 	return t, nil
 }
 
-// GetTaskDetail 是 GET /infra/workflow/tasks/{id} 的核心：详情 + 审批
-// 历史（设计计划 §3）。⚠️ 可见范围用 Task.InScope 的 OR 判据（assignee
-// 本人或其部门的上级都能看）——这条口子是刻意的，见 repo.Task.InScope
-// 注释：业务组件可能把这条待办的 deep_link 嵌进它自己的单据页面，单据的
-// 部门主管点进去时，"这条待办不是分给他的"不该变成 403。
+// GetTaskDetail 是 GET /infra/workflow/tasks/{id} 的核心：详情 + 审批历史。
+// 可见范围用 Task.InScope 的 OR 判据（被指派人本人，或其部门的上级都能看）：
+// 部门主管从"我的待办"列表里看得到下属的待办，点进详情就不该是 403。
 func (s *Service) GetTaskDetail(ctx context.Context, taskID string) (*repo.Task, []repo.TaskAction, error) {
 	if taskID == "" {
 		return nil, nil, fmt.Errorf("%w: task_id 不能为空", ErrInvalidArgument)
@@ -144,9 +134,9 @@ func (s *Service) GetTaskDetail(ctx context.Context, taskID string) (*repo.Task,
 	return t, actions, nil
 }
 
-// ListMyTasks 是 GET /infra/workflow/tasks（"我的待办"）：assignee 是
-// 调用者本人、或调用者管辖部门内任何人的待办都看得到（OR，同
-// repo.ListInput 字段注释与 workflow.openapi.yaml 的契约明文）。
+// ListMyTasks 是 GET /infra/workflow/tasks（"我的待办"）：被指派人是调用者
+// 本人、或在调用者管辖部门内的待办都看得到（OR，契约写明）。两个操作数都从
+// ScopeOf 取：漏填 ScopePrefix 会让前缀匹配退化成"匹配一切"，人人看到全部。
 func (s *Service) ListMyTasks(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error) {
 	in.AdminView = false
 	scope := besdk.ScopeOf(ctx)
@@ -155,21 +145,20 @@ func (s *Service) ListMyTasks(ctx context.Context, in repo.ListInput) ([]*repo.T
 	return s.repo.ListTasks(ctx, in)
 }
 
-// ListTasksAdmin 是 GET /infra/workflow/admin/tasks：管理者视角，绕过
-// owner 维（能看到不是指派给自己的待办）但不绕过 org 维——按调用者自己
-// 的部门前缀过滤，看不到范围外部门的待办（同 repo.ListInput.AdminView
-// 注释）。in.AssigneeSub 若已由调用方（http 层的查询参数）填好，原样
-// 透传做进一步精确过滤。
+// ListTasksAdmin 是 GET /infra/workflow/admin/tasks：管理者视角，绕过 owner 维
+// （看得到不是指派给自己的待办）但不绕过 org 维——按调用者自己的部门前缀过滤，
+// 看不到范围外部门的待办。in.AssigneeSub 若由 http 层的查询参数填好，原样
+// 透传做进一步的精确过滤。
 func (s *Service) ListTasksAdmin(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error) {
 	in.AdminView = true
 	in.ScopePrefix = besdk.ScopeOf(ctx).Prefix
 	return s.repo.ListTasks(ctx, in)
 }
 
-// actorInScope 是 ApproveTask/RejectTask 共用的一步：这两个动作要求
-// 调用者就是被指派人本人——不是 Task.InScope 的 OR 判据（那是"看得
-// 见"，这里是"能不能替他做决定"）。"转办/加签"是设计计划 §9 明确列出
-// 的开放问题，本阶段不做，所以严格等值，不接受部门主管代批。
+// actorInScope 是 ApproveTask / RejectTask 共用的一步：这两个动作要求调用者
+// 就是被指派人本人，不是 Task.InScope 的 OR 判据——那是"看得见"，这里是
+// "能不能替他做决定"。转办、加签都还没有做，所以严格等值，不接受部门主管
+// 代批。
 func (s *Service) actorInScope(ctx context.Context, t *repo.Task) (actorSub string, err error) {
 	actorSub = besdk.ScopeOf(ctx).Owner
 	if t.AssigneeSub != actorSub {
@@ -193,9 +182,8 @@ func (s *Service) ApproveTask(ctx context.Context, taskID, comment string) (*rep
 	return s.repo.ApproveTask(ctx, taskID, actorSub, comment)
 }
 
-// RejectTask 的附言必须非空——http 层的请求体绑定会强制要求（见设计计划
-// §3 的 REST 表），这一层只补一道兜底（同一份校验写两遍好过漏一层：
-// gRPC 与 REST 若将来共用同一个入口，绑定校验不一定总会经过）。
+// RejectTask 的附言必须非空。http 层的请求体绑定已经强制要求，这里再兜一道：
+// 不经过那个绑定的调用方（测试、将来别的入口）同样被挡住。
 func (s *Service) RejectTask(ctx context.Context, taskID, comment string) (*repo.Task, error) {
 	if taskID == "" {
 		return nil, fmt.Errorf("%w: task_id 不能为空", ErrInvalidArgument)
@@ -214,8 +202,7 @@ func (s *Service) RejectTask(ctx context.Context, taskID, comment string) (*repo
 	return s.repo.RejectTask(ctx, taskID, actorSub, comment)
 }
 
-// MarkOverdueAndPublish 供 module.go 的后台循环调用——本层不加任何逻辑，
-// 只是让 module 包不必直接认识 repo 包（同其余方法的分层判据）。
+// MarkOverdueAndPublish 供 module.go 的超期扫描循环调用，本层不加逻辑。
 func (s *Service) MarkOverdueAndPublish(ctx context.Context) (int, error) {
 	return s.repo.MarkOverdueAndPublish(ctx)
 }
