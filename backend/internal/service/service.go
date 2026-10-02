@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
@@ -37,6 +38,13 @@ func (s *Service) CreateTask(ctx context.Context, in repo.CreateTaskInput) (*rep
 	}
 	if in.AssigneeSub == "" {
 		return nil, fmt.Errorf("%w: assignee_sub 不能为空", ErrInvalidArgument)
+	}
+	// assignee_dept_path 是被指派人部门的快照：真实路径（以 / 开头），或空串
+	// （没分部门，这条待办只对本人可见）。别的值多半是调用方把自己的
+	// ScopeFilter.Prefix 原样传了进来——没分部门时那是哨兵 besdk.NoDeptPath，
+	// 写进行里之后，所有没分部门的人的前缀都等于它，彼此看得到对方的待办。
+	if in.AssigneeDeptPath != "" && !strings.HasPrefix(in.AssigneeDeptPath, "/") {
+		return nil, fmt.Errorf("%w: assignee_dept_path 必须以 / 开头或留空：%q", ErrInvalidArgument, in.AssigneeDeptPath)
 	}
 	if in.Title == "" {
 		return nil, fmt.Errorf("%w: title 不能为空", ErrInvalidArgument)
@@ -100,9 +108,13 @@ func (s *Service) BatchGetTasks(ctx context.Context, taskIDs []string) ([]*repo.
 // ListTasks 是 gRPC 面的 WorkflowService.ListTasks。同 BatchGetTasks：组件间
 // 调用不带用户身份（gRPC 侧不转发、不验 JWT），不做数据范围过滤；在这里调
 // besdk.ScopeOf 会 panic。人看的两维过滤是 ListMyTasks / ListTasksAdmin 的事，
-// 只在 REST 面生效。
+// 只在 REST 面生效。"看全部部门"用显式的 AllDepts 表达，不用空前缀：repo
+// 收到空前缀会报错，这样 REST 路径上漏填范围不会悄悄变成全部。
 func (s *Service) ListTasks(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error) {
-	in.AdminView = true // 借用"只判 ScopePrefix"这条分支；ScopePrefix 留空 = 看全部
+	in.AdminView = true
+	in.AllDepts = true
+	in.ScopePrefix = ""
+	in.ScopeOwner = ""
 	return s.repo.ListTasks(ctx, in)
 }
 
@@ -141,9 +153,11 @@ func (s *Service) GetTaskDetail(ctx context.Context, taskID string) (*repo.Task,
 
 // ListMyTasks 是 GET /infra/workflow/tasks（"我的待办"）：被指派人是调用者
 // 本人、或在调用者管辖部门内的待办都看得到（OR，契约写明）。两个操作数都从
-// ScopeOf 取：漏填 ScopePrefix 会让前缀匹配退化成"匹配一切"，人人看到全部。
+// ScopeOf 取：没分部门的人 Prefix 是哨兵 besdk.NoDeptPath，org 维落空，只剩
+// 指派给本人的；漏填 ScopePrefix 由 repo 报 ErrInvalidArgument。
 func (s *Service) ListMyTasks(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error) {
 	in.AdminView = false
+	in.AllDepts = false // 人看的视图永远带调用者自己的范围
 	scope := besdk.ScopeOf(ctx)
 	in.ScopeOwner = scope.Owner
 	in.ScopePrefix = scope.Prefix
@@ -152,10 +166,11 @@ func (s *Service) ListMyTasks(ctx context.Context, in repo.ListInput) ([]*repo.T
 
 // ListTasksAdmin 是 GET /infra/workflow/admin/tasks：管理者视角，绕过 owner 维
 // （看得到不是指派给自己的待办）但不绕过 org 维——按调用者自己的部门前缀过滤，
-// 看不到范围外部门的待办。in.AssigneeSub 若由 http 层的查询参数填好，原样
-// 透传做进一步的精确过滤。
+// 看不到范围外部门的待办；没分部门的管理员（哨兵前缀）一条也看不到。
+// in.AssigneeSub 若由 http 层的查询参数填好，原样透传做进一步的精确过滤。
 func (s *Service) ListTasksAdmin(ctx context.Context, in repo.ListInput) ([]*repo.Task, string, error) {
 	in.AdminView = true
+	in.AllDepts = false // 管理视图绕过 owner 维，不绕过 org 维
 	in.ScopePrefix = besdk.ScopeOf(ctx).Prefix
 	return s.repo.ListTasks(ctx, in)
 }

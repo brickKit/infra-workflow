@@ -543,3 +543,70 @@ func TestTask_InScope_空前缀org一侧不命中(t *testing.T) {
 		t.Fatal("真实前缀 /1/ 应该命中 /1/12/")
 	}
 }
+
+// TestListTasks_AllDepts系统视图看全部包括空部门行：gRPC 的系统视图用显式的
+// AllDepts 表达"全部部门"，包括 assignee_dept_path 为空的行；它只对 AdminView
+// 有效，和 ScopePrefix 一起给、或用在"我的待办"上都是调用方没想清楚，报错。
+func TestListTasks_AllDepts系统视图看全部包括空部门行(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	source := uniqueID("src-alldepts")
+	want := []*Task{
+		mustCreateTask(t, r, CreateTaskInput{
+			IdempotencyKey: uniqueID("all"), Type: TypeApproval, AssigneeSub: uniqueID("sub"), AssigneeDeptPath: "/9/99/",
+			Title: "有部门", SourceComponent: source, SourceAggregate: "x", SourceID: "1",
+		}),
+		mustCreateTask(t, r, CreateTaskInput{
+			IdempotencyKey: uniqueID("all"), Type: TypeApproval, AssigneeSub: uniqueID("sub"), AssigneeDeptPath: "",
+			Title: "没分部门", SourceComponent: source, SourceAggregate: "x", SourceID: "2",
+		}),
+	}
+	tasks, _, err := r.ListTasks(ctx, ListInput{SourceComponent: source, AdminView: true, AllDepts: true, PageSize: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != len(want) {
+		t.Fatalf("系统视图应该看到全部 %d 条，实际 %d 条", len(want), len(tasks))
+	}
+
+	for name, in := range map[string]ListInput{
+		"AllDepts用在我的待办上":         {SourceComponent: source, AllDepts: true, ScopeOwner: uniqueID("me"), PageSize: 50},
+		"AllDepts与ScopePrefix同时给": {SourceComponent: source, AdminView: true, AllDepts: true, ScopePrefix: "/9/", PageSize: 50},
+		"我的待办ScopeOwner留空":        {SourceComponent: source, ScopePrefix: "/9/", PageSize: 50},
+	} {
+		if _, _, err := r.ListTasks(ctx, in); !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("%s：应该 ErrInvalidArgument，实际：%v", name, err)
+		}
+	}
+}
+
+// TestListTasks_根标记斜杠看得到所有有部门的待办：authz 给出的 "/" 是整棵树的
+// 显式根标记，作为普通前缀匹配所有真实路径；assignee_dept_path 为空的行
+// （被指派人没分部门）不在任何部门里，只对本人可见，根标记也看不到。
+func TestListTasks_根标记斜杠看得到所有有部门的待办(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	source := uniqueID("src-root")
+	inDept := mustCreateTask(t, r, CreateTaskInput{
+		IdempotencyKey: uniqueID("root"), Type: TypeApproval, AssigneeSub: uniqueID("sub"), AssigneeDeptPath: "/9/99/",
+		Title: "有部门", SourceComponent: source, SourceAggregate: "x", SourceID: "1",
+	})
+	noDept := mustCreateTask(t, r, CreateTaskInput{
+		IdempotencyKey: uniqueID("root"), Type: TypeApproval, AssigneeSub: uniqueID("sub"), AssigneeDeptPath: "",
+		Title: "没分部门", SourceComponent: source, SourceAggregate: "x", SourceID: "2",
+	})
+	tasks, _, err := r.ListTasks(ctx, ListInput{SourceComponent: source, AdminView: true, ScopePrefix: "/", PageSize: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[int64]bool{}
+	for _, tk := range tasks {
+		ids[tk.ID] = true
+	}
+	if !ids[inDept.ID] {
+		t.Fatal("根标记 / 应该看到有部门的待办")
+	}
+	if ids[noDept.ID] {
+		t.Fatal("assignee_dept_path 为空的待办只对本人可见，根标记也不该看到")
+	}
+}

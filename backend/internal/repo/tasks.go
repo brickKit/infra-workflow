@@ -67,10 +67,14 @@ type CreateTaskInput struct {
 // （org 维）或 assignee_sub 精确命中（owner 维）任一为真就算可见。用于单条
 // 待办（GetTaskDetail：已经拿到 id、判断这个人能不能看）；"我的待办"列表在
 // SQL 里用同一个 OR 判据（见 ListInput）。两个操作数都来自调用者自己的
-// ScopeOf：dept_path 为空的人（坐在部门树根节点）前缀匹配一切，是 SDK 定义
-// 的"不限"，不是漏填。
+// ScopeOf。空串在 strings.HasPrefix 里匹配一切，所以空的操作数一律当"这一维
+// 不命中"：SDK 保证 Prefix 不是空串（没分部门的人拿到的是哨兵
+// besdk.NoDeptPath，任何行都不以它开头），收到空串只可能是调用方漏填了，
+// 漏填绝不能变成"看全部"。
 func (t *Task) InScope(scopePrefix, scopeOwner string) bool {
-	return strings.HasPrefix(t.AssigneeDeptPath, scopePrefix) || t.AssigneeSub == scopeOwner
+	orgHit := scopePrefix != "" && strings.HasPrefix(t.AssigneeDeptPath, scopePrefix)
+	ownerHit := scopeOwner != "" && t.AssigneeSub == scopeOwner
+	return orgHit || ownerHit
 }
 
 func taskIDString(id int64) string { return strconv.FormatInt(id, 10) }
@@ -210,20 +214,48 @@ type ListInput struct {
 	// GET /infra/workflow/tasks（"我的待办"，AdminView=false）：assignee_sub
 	// = ScopeOwner OR assignee_dept_path 前缀匹配 ScopePrefix。OR 是契约写明的
 	// （"只看得到指派给自己、或指派给自己下属部门某人的待办"），与 Task.InScope
-	// 是同一个判据。两个操作数都必须来自调用者真实的 ScopeOf：任何一个留空，
-	// 前缀匹配退化成"匹配一切"，整个 OR 就是人人看到全部。
+	// 是同一个判据。两个操作数都必须来自调用者真实的 ScopeOf，留空直接报
+	// ErrInvalidArgument：空前缀在 LIKE 里匹配一切，一个"全匹配"操作数就让
+	// 整个 OR 变成人人看到全部。
 	//
 	// GET /infra/workflow/admin/tasks（AdminView=true）：不判 ScopeOwner，只判
 	// ScopePrefix——绕过 owner 维、不绕过 org 维，管理员看的是自己部门范围内
 	// 的全部待办，不是全租户；可选再叠加 AssigneeSub（管理员显式指定要看的
-	// 某个人，与恒等于调用者自己的 ScopeOwner 不是一回事）。gRPC 的 ListTasks
-	// 也走这一支、ScopePrefix 留空：组件间调用没有用户身份，看全部。
+	// 某个人，与恒等于调用者自己的 ScopeOwner 不是一回事）。ScopePrefix 同样
+	// 不能留空。
+	//
+	// gRPC 的 ListTasks（系统视图）：AdminView=true 且 AllDepts=true，不判
+	// org 维、看全部——组件间调用没有用户身份。"全部部门"只能这样显式表达，
+	// 不能用空前缀表达；AllDepts 只对 AdminView 有效，此时 ScopePrefix 必须
+	// 留空（两个都给说明调用方没想清楚要哪一种）。
 	AdminView   bool
+	AllDepts    bool   // 仅系统视图（gRPC ListTasks）：不判 org 维
 	ScopeOwner  string // AdminView=false 时用，来自 besdk.ScopeOf(ctx).Owner
-	ScopePrefix string // 两种视图都用，来自 besdk.ScopeOf(ctx).Prefix
+	ScopePrefix string // AllDepts=false 时必填，来自 besdk.ScopeOf(ctx).Prefix
 	AssigneeSub string // 仅 AdminView=true 时可能非空：管理员的显式过滤
 	Cursor      string
 	PageSize    int32
+}
+
+// validateScope 把"漏填数据范围"挡在 SQL 之前：漏填的操作数在 LIKE / 等值
+// 里不是"不筛"，而是"匹配一切"或"匹配空串"，两样都不是调用方想要的。
+func (in ListInput) validateScope() error {
+	if in.AllDepts {
+		if !in.AdminView {
+			return fmt.Errorf("%w: AllDepts 只用于系统视图（AdminView），我的待办必须带调用者的范围", ErrInvalidArgument)
+		}
+		if in.ScopePrefix != "" {
+			return fmt.Errorf("%w: AllDepts 与 ScopePrefix 不能同时给", ErrInvalidArgument)
+		}
+		return nil
+	}
+	if in.ScopePrefix == "" {
+		return fmt.Errorf("%w: ScopePrefix 不能为空（看全部部门要显式给 AllDepts）", ErrInvalidArgument)
+	}
+	if !in.AdminView && in.ScopeOwner == "" {
+		return fmt.Errorf("%w: 我的待办的 ScopeOwner 不能为空", ErrInvalidArgument)
+	}
+	return nil
 }
 
 const taskSelectColumns = `SELECT id, type, status, assignee_sub, assignee_dept_path, title, summary,
@@ -250,10 +282,12 @@ func scanTask(row rowScanner, t *Task) error {
 	return nil
 }
 
-// ListTasks 按类型 / 状态 / 来源与数据范围筛，按 id 游标分页。ScopePrefix
-// 为空是"查全部"（坐在部门树根节点的人看得到全部），是前缀匹配的自然结果，
-// 不是 bug；所以 service 层绝不能在 REST 路径上把它留空。
+// ListTasks 按类型 / 状态 / 来源与数据范围筛，按 id 游标分页。数据范围的
+// 三种形态见 ListInput；漏填范围报 ErrInvalidArgument，不当成"不限"。
 func (r *Repo) ListTasks(ctx context.Context, in ListInput) ([]*Task, string, error) {
+	if err := in.validateScope(); err != nil {
+		return nil, "", err
+	}
 	pageSize := in.PageSize
 	if pageSize <= 0 || pageSize > 200 {
 		pageSize = 50
@@ -282,10 +316,13 @@ func (r *Repo) ListTasks(ctx context.Context, in ListInput) ([]*Task, string, er
 	if in.SourceComponent != "" {
 		query += ` AND source_component = ` + arg(in.SourceComponent)
 	}
-	// AdminView 决定判不判 ScopeOwner（见 ListInput 字段注释）。LIKE 的 '%'
-	// 拼在 SQL 里、不拼进参数值：参数只是调用者的 dept_path 原文。
+	// AdminView 决定判不判 ScopeOwner，AllDepts 决定判不判 org 维（见 ListInput
+	// 字段注释）。LIKE 的 '%' 拼在 SQL 里、不拼进参数值：参数只是调用者的
+	// dept_path 原文（或 SDK 的哨兵，任何行都不以它开头）。
 	if in.AdminView {
-		query += ` AND assignee_dept_path LIKE ` + arg(in.ScopePrefix) + ` || '%'`
+		if !in.AllDepts {
+			query += ` AND assignee_dept_path LIKE ` + arg(in.ScopePrefix) + ` || '%'`
+		}
 		if in.AssigneeSub != "" {
 			query += ` AND assignee_sub = ` + arg(in.AssigneeSub)
 		}
