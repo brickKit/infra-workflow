@@ -207,3 +207,120 @@ func TestCreateTask_summary不是合法JSON返回参数错误(t *testing.T) {
 		t.Fatalf("summary 不是合法 JSON 应该 ErrInvalidArgument，实际：%v", err)
 	}
 }
+
+// ── 没分部门的人（dept_path 为空）：org 维必须落空，只剩本人。──────────
+//
+// authz 签发的真实部门路径总是 `/<id>/…/`（根部门也是 `/<根id>/`），所以
+// dept_path 为空只有一种来源：这个人还没被分到任何部门（新账号的默认状态）。
+// 把它当成"不限"，新开的、只被授了查看权限的账号就看得到全租户的待办。
+
+func idsOf(tasks []*repo.Task) map[int64]bool {
+	ids := map[int64]bool{}
+	for _, tk := range tasks {
+		ids[tk.ID] = true
+	}
+	return ids
+}
+
+func mustCreate(t *testing.T, r *repo.Repo, assignee, dept, source, sourceID string) *repo.Task {
+	t.Helper()
+	task, err := r.CreateTask(context.Background(), repo.CreateTaskInput{
+		IdempotencyKey: uniqueSuffix("nodept"), Type: repo.TypeApproval,
+		AssigneeSub: assignee, AssigneeDeptPath: dept,
+		Title: "无部门测试", SourceComponent: source, SourceAggregate: "x", SourceID: sourceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return task
+}
+
+func TestListMyTasks_无部门的人只看到指派给自己的待办(t *testing.T) {
+	svc, r := newTestService(t)
+	me := uniqueSuffix("nodept-me")
+	source := uniqueSuffix("src-nodept")
+
+	mine := mustCreate(t, r, me, "", source, "1")
+	otherDept := mustCreate(t, r, uniqueSuffix("other"), "/9/99/", source, "2")
+	otherNoDept := mustCreate(t, r, uniqueSuffix("other"), "", source, "3")
+
+	tasks, _, err := svc.ListMyTasks(authedCtx(me, ""), repo.ListInput{SourceComponent: source, PageSize: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := idsOf(tasks)
+	if !ids[mine.ID] {
+		t.Fatal("指派给我自己的待办应该出现（owner 维）")
+	}
+	if ids[otherDept.ID] {
+		t.Fatal("别的部门里别人的待办不该出现：没分部门不是'不限'")
+	}
+	if ids[otherNoDept.ID] {
+		t.Fatal("同样没分部门的别人的待办也不该出现：两个空路径不是'同一个部门'")
+	}
+	if len(tasks) != 1 {
+		t.Fatalf("应该只有指派给我的那一条，实际 %d 条", len(tasks))
+	}
+}
+
+func TestListTasksAdmin_无部门的管理员看不到任何部门的待办(t *testing.T) {
+	svc, r := newTestService(t)
+	source := uniqueSuffix("src-nodept-admin")
+
+	mustCreate(t, r, uniqueSuffix("a"), "/9/99/", source, "1")
+	mustCreate(t, r, uniqueSuffix("b"), "/1/", source, "2")
+	mustCreate(t, r, uniqueSuffix("c"), "", source, "3")
+
+	tasks, _, err := svc.ListTasksAdmin(authedCtx(uniqueSuffix("admin"), ""), repo.ListInput{SourceComponent: source, PageSize: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 0 {
+		t.Fatalf("没分部门的管理员不该看到任何部门的待办，实际 %d 条", len(tasks))
+	}
+}
+
+func TestGetTaskDetail_无部门的人看别人的待办是Forbidden(t *testing.T) {
+	svc, r := newTestService(t)
+	source := uniqueSuffix("src-nodept-detail")
+	inDept := mustCreate(t, r, uniqueSuffix("assignee"), "/1/12/", source, "1")
+	noDept := mustCreate(t, r, uniqueSuffix("assignee"), "", source, "2")
+
+	for _, task := range []*repo.Task{inDept, noDept} {
+		_, _, err := svc.GetTaskDetail(authedCtx(uniqueSuffix("nodept-viewer"), ""), fmt.Sprint(task.ID))
+		if !errors.Is(err, repo.ErrForbidden) {
+			t.Fatalf("没分部门的人看别人的待办（assignee_dept_path=%q）应该 ErrForbidden，实际：%v", task.AssigneeDeptPath, err)
+		}
+	}
+
+	// 自己的待办照样看得到：没分部门只是 org 维落空，owner 维不受影响。
+	me := uniqueSuffix("nodept-owner")
+	mine := mustCreate(t, r, me, "", source, "3")
+	if _, _, err := svc.GetTaskDetail(authedCtx(me, ""), fmt.Sprint(mine.ID)); err != nil {
+		t.Fatalf("没分部门的人看自己的待办应该放行，实际：%v", err)
+	}
+}
+
+// TestListTasks_gRPC系统视图AllDepts仍看全部：gRPC 的 ListTasks 是组件间调用，
+// 没有用户身份，契约上就是"看全部"。修 dept 范围之后，这一支必须用显式的
+// "全部部门"表达，不能被"空前缀不再是全部"误伤——包括 assignee_dept_path
+// 为空的行。
+func TestListTasks_gRPC系统视图AllDepts仍看全部(t *testing.T) {
+	svc, r := newTestService(t)
+	source := uniqueSuffix("src-system")
+	a := mustCreate(t, r, uniqueSuffix("a"), "/9/99/", source, "1")
+	b := mustCreate(t, r, uniqueSuffix("b"), "/1/12/", source, "2")
+	c := mustCreate(t, r, uniqueSuffix("c"), "", source, "3")
+
+	// 不带 Claims 的 ctx：与 gRPC 入口一致。
+	tasks, _, err := svc.ListTasks(context.Background(), repo.ListInput{SourceComponent: source, PageSize: 50})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := idsOf(tasks)
+	for _, want := range []*repo.Task{a, b, c} {
+		if !ids[want.ID] {
+			t.Fatalf("系统视图应该看到全部待办，缺了 assignee_dept_path=%q 的那条", want.AssigneeDeptPath)
+		}
+	}
+}

@@ -493,3 +493,53 @@ func TestMarkOverdueAndPublish_只通知一次且不改status(t *testing.T) {
 		t.Fatalf("超期通知只该发一次，第二轮扫描后期望仍是 1 条，实际 %d 条", eventCount)
 	}
 }
+
+// TestListTasks_非系统视图ScopePrefix留空报InvalidArgument：SDK v0.5.0 保证
+// ScopeFilter.Prefix 永远不是空串（没分部门时是哨兵 besdk.NoDeptPath），所以
+// repo 收到空前缀只可能是调用方漏填了。漏填当成"不限"就是 fail-open：
+// 空串拼上 '%' 就是 LIKE '%'，匹配一切。两种人看的视图都必须拒绝，不能悄悄返回全部。
+func TestListTasks_非系统视图ScopePrefix留空报InvalidArgument(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	source := uniqueID("src-guard")
+	mustCreateTask(t, r, CreateTaskInput{
+		IdempotencyKey: uniqueID("guard"), Type: TypeApproval, AssigneeSub: uniqueID("sub"), AssigneeDeptPath: "/9/99/",
+		Title: "守卫", SourceComponent: source, SourceAggregate: "x", SourceID: "1",
+	})
+
+	for name, in := range map[string]ListInput{
+		"我的待办": {SourceComponent: source, ScopeOwner: uniqueID("me"), ScopePrefix: "", PageSize: 50},
+		"管理视图": {SourceComponent: source, AdminView: true, ScopePrefix: "", PageSize: 50},
+	} {
+		tasks, _, err := r.ListTasks(ctx, in)
+		if !errors.Is(err, ErrInvalidArgument) {
+			t.Fatalf("%s：ScopePrefix 留空应该 ErrInvalidArgument，实际 err=%v、返回 %d 条", name, err, len(tasks))
+		}
+	}
+}
+
+// TestTask_InScope_空前缀org一侧不命中：单条待办的可见性判断与列表是同一个
+// 判据。空前缀在 strings.HasPrefix 里匹配一切，必须当成"org 维不命中"，
+// 否则任何拿到 task_id 的人都能看详情。owner 维不受影响。
+func TestTask_InScope_空前缀org一侧不命中(t *testing.T) {
+	for _, dept := range []string{"/1/12/", "/", ""} {
+		task := &Task{AssigneeSub: "u_assignee", AssigneeDeptPath: dept}
+		if task.InScope("", "u_stranger") {
+			t.Fatalf("空前缀不该在 org 一侧命中（assignee_dept_path=%q）", dept)
+		}
+		if !task.InScope("", "u_assignee") {
+			t.Fatalf("owner 维命中时应该可见（assignee_dept_path=%q）", dept)
+		}
+	}
+	// 哨兵（没分部门的人）在 org 一侧也不命中，包括 assignee_dept_path 为空的行。
+	for _, dept := range []string{"/1/12/", ""} {
+		task := &Task{AssigneeSub: "u_assignee", AssigneeDeptPath: dept}
+		if task.InScope("!no-dept", "u_stranger") {
+			t.Fatalf("没分部门的哨兵前缀不该命中（assignee_dept_path=%q）", dept)
+		}
+	}
+	// 真实前缀照常命中。
+	if !(&Task{AssigneeDeptPath: "/1/12/"}).InScope("/1/", "u_stranger") {
+		t.Fatal("真实前缀 /1/ 应该命中 /1/12/")
+	}
+}
