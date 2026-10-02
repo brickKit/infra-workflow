@@ -129,7 +129,7 @@ func (r *Repo) CloseTask(ctx context.Context, in CloseTaskInput) (*Task, error) 
 			return err
 		}
 		if !claimed {
-			resultID, err = lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
+			resultID, err = replayResult(ctx, tx, in.IdempotencyKey, "CloseTask")
 			return err
 		}
 		t, err := transitionTaskTx(ctx, tx, id, StatusResolved, ActionClosed, "", in.Comment)
@@ -171,7 +171,7 @@ func (r *Repo) CancelTask(ctx context.Context, in CancelTaskInput) (*Task, error
 			return err
 		}
 		if !claimed {
-			resultID, err = lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
+			resultID, err = replayResult(ctx, tx, in.IdempotencyKey, "CancelTask")
 			return err
 		}
 		t, err := transitionTaskTx(ctx, tx, id, StatusCancelled, ActionCancelled, "", in.Reason)

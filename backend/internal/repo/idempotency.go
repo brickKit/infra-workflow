@@ -44,3 +44,19 @@ func lookupIdempotencyResult(ctx context.Context, tx *sql.Tx, key string) (strin
 	}
 	return resultID, nil
 }
+
+// replayResult 是声明失败（这个 key 已经有人用过）时取上一次结果的地方：
+// 只有同一个命令的重放才算幂等。key 被另一个命令用过（调用方拼 key 时撞了）
+// 就报参数错误——照样短路的话，CloseTask 会把 CreateTask 的结果当成"已经
+// 关闭过"返回，待办其实还是 PENDING，调用方却以为关掉了。
+func replayResult(ctx context.Context, tx *sql.Tx, key, command string) (string, error) {
+	var stored, resultID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT command, result_id FROM command_idempotency WHERE idempotency_key = $1`, key).Scan(&stored, &resultID); err != nil {
+		return "", fmt.Errorf("查 command_idempotency: %w", err)
+	}
+	if stored != command {
+		return "", fmt.Errorf("%w: idempotency_key %q 已经被 %s 用过，不能再用于 %s", ErrInvalidArgument, key, stored, command)
+	}
+	return resultID, nil
+}

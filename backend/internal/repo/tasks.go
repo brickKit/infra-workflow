@@ -95,7 +95,7 @@ func (r *Repo) CreateTask(ctx context.Context, in CreateTaskInput) (*Task, error
 			return err
 		}
 		if !claimed {
-			resultID, err := lookupIdempotencyResult(ctx, tx, in.IdempotencyKey)
+			resultID, err := replayResult(ctx, tx, in.IdempotencyKey, "CreateTask")
 			if err != nil {
 				return err
 			}
