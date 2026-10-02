@@ -19,8 +19,9 @@ var ErrInvalidArgument = errors.New("参数不合法")
 // close / cancel——"晚了一步"（别人或自己已经处理过），不是系统错误。
 var ErrNotPending = errors.New("待办已经不是 PENDING 状态")
 
-// ErrForbidden：这条待办真实存在，调用者只是看不见 / 不能动它。与
-// ErrNotFound 不能混用：前端对 403 与 404 的提示不同。
+// ErrForbidden：这条待办真实存在，调用者不能动它（approve / reject 不是被
+// 指派人本人）。只用于动作；单条读对范围外的待办答 ErrNotFound（TaskNotFound），
+// 不让 403 / 404 的区别泄露待办是否存在。
 var ErrForbidden = errors.New("无权访问该待办")
 
 type Repo struct {

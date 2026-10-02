@@ -164,12 +164,18 @@ func (r *Repo) GetTask(ctx context.Context, taskID string) (*Task, error) {
 		return scanTask(tx.QueryRowContext(ctx, taskSelectColumns+` FROM workflow_tasks WHERE id = $1`, id), &t)
 	})
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("%w: task id=%s", ErrNotFound, taskID)
+		return nil, TaskNotFound(taskID)
 	}
 	if err != nil {
 		return nil, wrap("查待办", err)
 	}
 	return &t, nil
+}
+
+// TaskNotFound 是"查不到这条待办"的唯一写法。service 层对范围外的单条读也用它：
+// 范围外与真不存在必须连错误信息都一样，否则区别本身就泄露了这个 id 有一条待办。
+func TaskNotFound(taskID string) error {
+	return fmt.Errorf("%w: task id=%s", ErrNotFound, taskID)
 }
 
 // BatchGetTasks 是给调用方防 N+1 的批量读：一次请求按一组 id 取回。查不到的

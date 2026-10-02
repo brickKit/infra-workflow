@@ -139,6 +139,9 @@ func (s *Service) ListTasks(ctx context.Context, in repo.ListInput) ([]*repo.Tas
 // ── 读 + 写：REST 面用，走 besdk.ScopeOf(ctx)（人的操作，ctx 里有验过签的 Claims）──
 
 // checkTaskInScope：先按 id 查出这条待办，再判断调用者是否在它的可见范围内。
+// 范围外答的是"不存在"（repo.TaskNotFound，REST 404），与真不存在的 id 连错误
+// 信息都一样：答 403 就等于告诉调用者"这个 id 有一条待办，只是你看不到"。
+// 动作（approve / reject）不走这里，对不是自己的待办仍答 403（actorInScope）。
 func (s *Service) checkTaskInScope(ctx context.Context, taskID string) (*repo.Task, error) {
 	t, err := s.repo.GetTask(ctx, taskID)
 	if err != nil {
@@ -146,7 +149,7 @@ func (s *Service) checkTaskInScope(ctx context.Context, taskID string) (*repo.Ta
 	}
 	scope := besdk.ScopeOf(ctx)
 	if !t.InScope(scope.Prefix, scope.Owner) {
-		return nil, repo.ErrForbidden
+		return nil, repo.TaskNotFound(taskID)
 	}
 	return t, nil
 }
