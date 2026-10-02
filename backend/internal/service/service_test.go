@@ -82,7 +82,7 @@ func TestGetTaskDetail_范围内OR命中(t *testing.T) {
 	}
 }
 
-func TestGetTaskDetail_范围外ErrForbidden(t *testing.T) {
+func TestGetTaskDetail_范围外ErrNotFound(t *testing.T) {
 	svc, r := newTestService(t)
 	task, err := r.CreateTask(context.Background(), repo.CreateTaskInput{
 		IdempotencyKey: uniqueSuffix("detail-out"), Type: repo.TypeApproval,
@@ -93,11 +93,15 @@ func TestGetTaskDetail_范围外ErrForbidden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 既不是 assignee，部门也不搭边——必须是 ErrForbidden，不是悄悄放行，
-	// 也不是 ErrNotFound（待办真实存在）。
+	// 既不是 assignee，部门也不搭边——必须是 ErrNotFound，不是悄悄放行，
+	// 也不是 ErrForbidden：单条读对范围外的待办答"不存在"，与真不存在的 id
+	// 一样，否则 403 / 404 的区别本身就告诉调用者"这个 id 有一条待办"。
 	_, _, err = svc.GetTaskDetail(authedCtx(uniqueSuffix("stranger"), "/9/99/"), fmt.Sprint(task.ID))
-	if !errors.Is(err, repo.ErrForbidden) {
-		t.Fatalf("范围外应该是 ErrForbidden，实际：%v", err)
+	if !errors.Is(err, repo.ErrNotFound) {
+		t.Fatalf("范围外应该是 ErrNotFound，实际：%v", err)
+	}
+	if errors.Is(err, repo.ErrForbidden) {
+		t.Fatalf("范围外不该带 ErrForbidden：%v", err)
 	}
 }
 
@@ -280,7 +284,7 @@ func TestListTasksAdmin_无部门的管理员看不到任何部门的待办(t *t
 	}
 }
 
-func TestGetTaskDetail_无部门的人看别人的待办是Forbidden(t *testing.T) {
+func TestGetTaskDetail_无部门的人看别人的待办是NotFound(t *testing.T) {
 	svc, r := newTestService(t)
 	source := uniqueSuffix("src-nodept-detail")
 	inDept := mustCreate(t, r, uniqueSuffix("assignee"), "/1/12/", source, "1")
@@ -288,8 +292,8 @@ func TestGetTaskDetail_无部门的人看别人的待办是Forbidden(t *testing.
 
 	for _, task := range []*repo.Task{inDept, noDept} {
 		_, _, err := svc.GetTaskDetail(authedCtx(uniqueSuffix("nodept-viewer"), ""), fmt.Sprint(task.ID))
-		if !errors.Is(err, repo.ErrForbidden) {
-			t.Fatalf("没分部门的人看别人的待办（assignee_dept_path=%q）应该 ErrForbidden，实际：%v", task.AssigneeDeptPath, err)
+		if !errors.Is(err, repo.ErrNotFound) {
+			t.Fatalf("没分部门的人看别人的待办（assignee_dept_path=%q）应该 ErrNotFound，实际：%v", task.AssigneeDeptPath, err)
 		}
 	}
 

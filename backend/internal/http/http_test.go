@@ -165,14 +165,38 @@ func TestGetTask_返回TaskDetail含审批历史(t *testing.T) {
 	}
 }
 
-// TestGetTask_范围外403：既不是被指派人、部门也不在调用者范围内，详情返回
-// 403（待办真实存在，不是 404）。
-func TestGetTask_范围外403(t *testing.T) {
+// TestGetTask_范围外404与不存在无法区分：既不是被指派人、部门也不在调用者范围
+// 内，详情答 404，状态码与错误信息的形状都和真不存在的 id 一样——否则 403 与
+// 404 的区别本身就泄露了"这个 id 有一条待办"。
+func TestGetTask_范围外404与不存在无法区分(t *testing.T) {
 	svc, r := testService(t)
 	id := createTask(t, r, unique("assignee"), "/1/12/")
-	code, body := do(t, engineAs(svc, unique("stranger"), "/9/99/"), http.MethodGet, "/infra/workflow/tasks/"+id, "")
+	eng := engineAs(svc, unique("stranger"), "/9/99/")
+
+	code, body := do(t, eng, http.MethodGet, "/infra/workflow/tasks/"+id, "")
+	if code != http.StatusNotFound {
+		t.Fatalf("范围外期望 404，实际 %d：%v", code, body)
+	}
+	const missing = "999999999999"
+	missingCode, missingBody := do(t, eng, http.MethodGet, "/infra/workflow/tasks/"+missing, "")
+	if missingCode != http.StatusNotFound {
+		t.Fatalf("不存在的待办期望 404，实际 %d：%v", missingCode, missingBody)
+	}
+	got := strings.ReplaceAll(fmt.Sprint(body["error"]), id, "<id>")
+	want := strings.ReplaceAll(fmt.Sprint(missingBody["error"]), missing, "<id>")
+	if got != want {
+		t.Fatalf("范围外与不存在的错误信息应该一样（除了 id），实际\n范围外：%s\n不存在：%s", got, want)
+	}
+}
+
+// TestApprove_范围外仍是403：R62 只改单条读；动作（approve / reject）对不是自己
+// 的待办仍答 403。
+func TestApprove_范围外仍是403(t *testing.T) {
+	svc, r := testService(t)
+	id := createTask(t, r, unique("assignee"), "/1/12/")
+	code, body := do(t, engineAs(svc, unique("stranger"), "/9/99/"), http.MethodPost, "/infra/workflow/tasks/"+id+"/approve", `{"comment":"x"}`)
 	if code != http.StatusForbidden {
-		t.Fatalf("范围外期望 403，实际 %d：%v", code, body)
+		t.Fatalf("对范围外的待办 approve 期望 403，实际 %d：%v", code, body)
 	}
 }
 
