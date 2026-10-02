@@ -39,7 +39,7 @@ gRPC `infra.workflow.v1.WorkflowService`，给业务组件用：
 
 | rpc | 类型 | 说明 |
 |---|---|---|
-| `CreateTask` | 命令 | 按 `idempotency_key` 幂等 |
+| `CreateTask` | 命令 | 按 `idempotency_key` 幂等；`summary_json` 可选（`{}`），不是合法 JSON → `INVALID_ARGUMENT` |
 | `CloseTask` | 命令 | 幂等；要带 `task_id`（调用方从 `CreateTask` 起就一直持有）；→ `RESOLVED` |
 | `CancelTask` | 命令 | 幂等；要带 `task_id`；→ `CANCELLED` |
 | `GetTaskStatus` | 读 | 按 `task_id` **或**按 `CreateTask` 的 `idempotency_key`；总是回带 `task_id` |

@@ -39,7 +39,7 @@ gRPC `infra.workflow.v1.WorkflowService`, for business components:
 
 | rpc | Kind | Notes |
 |---|---|---|
-| `CreateTask` | command | idempotent by `idempotency_key` |
+| `CreateTask` | command | idempotent by `idempotency_key`; `summary_json` optional (`{}`), invalid JSON → `INVALID_ARGUMENT` |
 | `CloseTask` | command | idempotent; needs `task_id` (the caller has held it since `CreateTask`); → `RESOLVED` |
 | `CancelTask` | command | idempotent; needs `task_id`; → `CANCELLED` |
 | `GetTaskStatus` | read | by `task_id` **or** by the `idempotency_key` of `CreateTask`; always returns the `task_id` |
