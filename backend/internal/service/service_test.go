@@ -13,7 +13,7 @@ import (
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/infra-workflow/v2/backend/internal/repo"
-	_ "github.com/jackc/pgx/v5/stdlib" // §12.4：不用 lib/pq，驱动名注册为 "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib" // 锁定栈用 pgx 不用 lib/pq，驱动名注册为 "pgx"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -44,7 +44,7 @@ func uniqueSuffix(prefix string) string {
 }
 
 // authedCtx 造一个"已经过 RequirePermission 验签"的 ctx，besdk.ScopeOf
-// 才不会 panic（同 erp-sales service_test.go 的既有判据）。
+// 才不会 panic。
 func authedCtx(sub, deptPath string) context.Context {
 	return besdk.ContextWithClaims(context.Background(), besdk.Claims{Sub: sub, DeptPath: deptPath})
 }
@@ -101,10 +101,9 @@ func TestGetTaskDetail_范围外ErrForbidden(t *testing.T) {
 	}
 }
 
-// TestListMyTasks_service层注入两维ScopeOf 是本次实现修过的真实 bug 的
-// 服务层回归：ListMyTasks 必须同时把 ScopeOwner 与 ScopePrefix 都从
-// ScopeOf(ctx) 填好，遗漏 ScopePrefix 会让 SQL 里的 `LIKE ” || '%'`
-// 退化成匹配全部，等于让"我的待办"看到所有人的待办。
+// TestListMyTasks_service层注入两维ScopeOf：ListMyTasks 必须同时把 ScopeOwner
+// 与 ScopePrefix 都从 ScopeOf(ctx) 填好。漏填 ScopePrefix 会让 SQL 里的
+// 前缀匹配退化成 `LIKE '%'`（匹配全部），OR 之后"我的待办"看到所有人的待办。
 func TestListMyTasks_service层注入两维ScopeOf(t *testing.T) {
 	svc, r := newTestService(t)
 	ctx := context.Background()
@@ -161,7 +160,7 @@ func TestActorInScope_只有本人能approve不接受部门主管代批(t *testi
 	id := fmt.Sprint(task.ID)
 
 	// 部门主管即使 org 维能"看见"（GetTaskDetail 会放行），也不能代批——
-	// "转办"是设计计划 §9 明确列出的未做功能，本阶段严格要求本人。
+	// 转办还没有做，所以严格要求被指派人本人。
 	_, err = svc.ApproveTask(authedCtx(uniqueSuffix("manager"), "/1/12/"), id, "我帮你批了")
 	if !errors.Is(err, repo.ErrForbidden) {
 		t.Fatalf("非本人 approve 应该 ErrForbidden，实际：%v", err)

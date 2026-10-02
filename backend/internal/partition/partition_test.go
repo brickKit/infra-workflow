@@ -48,17 +48,13 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestEnsureAllWeekly_幂等且与迁移分区命名一致 是真机发现的真实 bug 的
-// 回归测试：本组件的 event_outbox 表从建仓库起就是分区表（决策 54），
-// 但 Module.Start 之前从没接过这个包——迁移只种了 4 周初始分区，第 5 周
-// 起 INSERT 会因为找不到覆盖那个日期的分区而失败，Outbox 推送从此
-// 静默停摆（所有新的 task.created/completed/cancelled 事件都发不出去，
-// 且没有任何清晰的报错指向"分区没建"这个根因）。这条测试连跑两次
-// ensureAllWeekly 验证幂等，且断言未来第 lookAheadWeeks 周的分区确实
-// 建出来了——命名必须和迁移里种的分区名格式完全一致（"表名_YYYY_MM_DD"），
-// 否则 to_regclass 查不到已存在的分区，会尝试新建同一段时间范围的分区，
-// 撞上 PostgreSQL 分区范围不许重叠的报错（同 erp-inventory 设计计划 §9
-// 第 8 条的既有教训）。
+// TestEnsureAllWeekly_幂等且与迁移分区命名一致：event_outbox 是周分区表，
+// 迁移只建了最初几周的分区，之后没有分区的日期 INSERT 会失败，Outbox 从此
+// 发不出任何 task.* 事件，而报错里看不出是"分区没建"。这条测试连跑两次
+// ensureAllWeekly 验证幂等，并断言未来第 lookAheadWeeks 周的分区确实建出来了。
+// 命名必须和迁移里建的分区名格式完全一致（"表名_YYYY_MM_DD"）：否则 to_regclass
+// 查不到已存在的分区，会去新建同一段时间范围的分区，撞上 PostgreSQL"分区范围
+// 不许重叠"的报错。
 func TestEnsureAllWeekly_幂等且与迁移分区命名一致(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()

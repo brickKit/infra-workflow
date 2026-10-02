@@ -13,7 +13,7 @@ import (
 	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	_ "github.com/jackc/pgx/v5/stdlib" // §12.4：不用 lib/pq，驱动名注册为 "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib" // 锁定栈用 pgx 不用 lib/pq，驱动名注册为 "pgx"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -35,8 +35,7 @@ func testRepo(t *testing.T) *Repo {
 }
 
 // uniqueID 给每个测试造一个独立的 idempotency_key/sub/dept 前缀，测试之间
-// 不共享行、互不干扰（同 infra-authz/infra-iam-casdoor repo_test.go 的
-// 既有判据）。
+// 不共享行、互不干扰（测试库是共用的，不在测试之间清表）。
 var idSeq int64
 
 func uniqueID(prefix string) string {
@@ -129,9 +128,8 @@ func TestApproveTask_成功后再次操作返回ErrNotPending(t *testing.T) {
 	// 再次操作（无论 approve 还是 reject）都必须报 ErrNotPending——已经
 	// 不是 PENDING，claim-first 保护的是"同一个命令重放"，这里测的是
 	// "状态确实不对时必须报错，不能悄悄吞掉"（actions.go 顶部注释）。
-	// ⚠️ ApproveTask/RejectTask 用 wrap() 包了一层前缀（"同意待办: %w"），
-	// 必须用 errors.Is 而不是直接比较，同 GetTaskStatus 那次
-	// lookupIdempotencyResult 的既有教训。
+	// ApproveTask / RejectTask 用 wrap() 包了一层前缀（"同意待办: %w"），
+	// 必须用 errors.Is 而不是直接比较。
 	if _, err := r.ApproveTask(ctx, taskIDString(task.ID), actorSub, "再次同意"); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("对已同意的待办再次同意应该报 ErrNotPending，实际 %v", err)
 	}
@@ -256,9 +254,9 @@ func TestCancelTask_发cancelled而非completed事件(t *testing.T) {
 	}
 }
 
-// TestGetTaskStatus_区分NotFound与Cancelled 是设计计划 §3.1 那条硬约束的
-// 直接测试：合并成一个"没有"是错的（同 erp-inventory
-// TestGetReservationStatus_区分NotFound与Cancelled 的既有判据）。
+// TestGetTaskStatus_区分NotFound与Cancelled：两者合并成一个"没有"是错的——
+// NOT_FOUND 说明请求根本没到（可以安全重试），CANCELLED 说明已被作废
+// （重试是错的）。
 func TestGetTaskStatus_区分NotFound与Cancelled(t *testing.T) {
 	r := testRepo(t)
 	ctx := context.Background()
@@ -293,9 +291,8 @@ func TestGetTaskStatus_区分NotFound与Cancelled(t *testing.T) {
 	}
 }
 
-// TestGetTaskStatus_按idempotencyKey查 验证 CreateTask 超时场景下唯一
-// 能用的反查路径（设计计划 §3.1 ⭐，erp-inventory 阶段二真机故障注入
-// 测试换来的教训——同一个判据搬到本组件）。
+// TestGetTaskStatus_按idempotencyKey查：CreateTask 超时时调用方拿不到
+// task_id，手里只有自己生成的 idempotency_key，这是它唯一能用的反查路径。
 func TestGetTaskStatus_按idempotencyKey查(t *testing.T) {
 	r := testRepo(t)
 	ctx := context.Background()
@@ -343,11 +340,9 @@ func TestBatchGetTasks_查不到的id直接省略(t *testing.T) {
 	}
 }
 
-// TestListTasks_我的待办用OR不是AND 是本次实现中修过的一个真实 bug 的
-// 回归测试：assignee_sub 命中 ScopeOwner 或 assignee_dept_path 命中
-// ScopePrefix 任一为真都该出现在"我的待办"列表里（workflow.openapi.yaml
-// 明文），但 ScopePrefix 留空绝不能变成"看到所有部门"——那是另一个人
-// 的部门时才是真正的越权。
+// TestListTasks_我的待办用OR不是AND：assignee_sub 命中 ScopeOwner 或
+// assignee_dept_path 命中 ScopePrefix，任一为真都该出现在"我的待办"列表里
+// （契约写明）；两边都不命中的——别人的、在别的部门的——绝不能出现。
 func TestListTasks_我的待办用OR不是AND(t *testing.T) {
 	r := testRepo(t)
 	ctx := context.Background()
@@ -468,7 +463,7 @@ func TestMarkOverdueAndPublish_只通知一次且不改status(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Status != StatusPending {
-		t.Fatalf("超期扫描绝不能修改 status，期望仍是 PENDING，实际 %q（§6.6 铁律一）", got.Status)
+		t.Fatalf("超期扫描绝不能修改 status（怎么处理超期归业务组件），期望仍是 PENDING，实际 %q", got.Status)
 	}
 
 	var eventCount int
