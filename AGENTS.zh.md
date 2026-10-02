@@ -67,6 +67,8 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=infra_workfl
 | 把空的 `dept_path` 当成"根节点、看全部" | 一个没分部门、只被授了查看权限的新账号看得到全公司的待办 | 真实路径总以 `/` 开头（根部门也是）；空串表示没分部门。be-sdk-go v0.5.0 把它变成哨兵 `besdk.NoDeptPath`；`TestListMyTasks_无部门的人只看到指派给自己的待办` 守着它 |
 | 往 `assignee_dept_path` 里存不以 `/` 开头的值 | 所有没分部门的人共享同一个哨兵前缀，看得到所有存成它的待办 | `CreateTask` 拒绝它（`INVALID_ARGUMENT`）；调用方传被指派人的真实路径或空串，绝不传自己的 `ScopeFilter.Prefix` |
 | 在 gRPC 路径上调 `besdk.ScopeOf` | 调用 panic（`500`） | gRPC 调用不带用户 claims；数据范围只在 REST 上 |
+| 对范围外待办的单条读答 `403` | 调用者凭状态码分得清哪些 ID 存在、哪些不存在，可以逐个探测整张表 | 读答 `404`，错误信息与不存在的 ID 一样（`repo.TaskNotFound`）；只有动作答 `403` |
+| 把调用方错误或关停时的取消记成 `ERROR`（每个失败的命令都 `logger.Error`） | 每个错的 `task_id`、用过的幂等键、晚到的关闭都成了 ERROR 行；真正要运维处理的那几条被淹没 | 访问日志与 RED 指标已经记下了状态码；`service.logFailure` 对 Internal 记 ERROR、取消记 Warn、其余记 Info；后台循环在 `ctx` 已取消后不记失败 |
 | 因为 `Task.InScope` 为真就让部门主管审批 | 主管替下属签了审批，没有任何"转办"记录 | `InScope` 是可见性；处理要求 `assignee_sub` = 调用者（`actorInScope`） |
 | 对已经不是 `PENDING` 的待办的动作返回成功 | 调用方以为自己处理了；并发的另一个动作悄悄赢了 | 重放在更早的幂等那层就短路了；走到 `transitionTaskTx` 时状态不对是真冲突（`ErrNotPending`，REST `409`） |
 | REST 上只用 `service.ToStatus` 翻译 `ErrNotPending` | 前端拿到 `400`，提示"请求有误"而不是"已被处理" | SDK 把 `FailedPrecondition` 映射成 `400`；`restStatus` 把它换成 `Aborted`（`409`） |

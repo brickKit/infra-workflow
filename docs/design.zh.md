@@ -57,7 +57,7 @@ REST，前缀 `/infra/workflow`，给人用：
 | 路径 | 权限键 | 说明 |
 |---|---|---|
 | `GET /tasks` | `infra.workflow.task.view` | "我的待办"：owner OR org（见数据范围） |
-| `GET /tasks/{id}` | `infra.workflow.task.view` | `TaskDetail`：待办加 `actions`（还没人处理时是空数组）；不在调用者范围内 `403`，不存在 `404` |
+| `GET /tasks/{id}` | `infra.workflow.task.view` | `TaskDetail`：待办加 `actions`（还没人处理时是空数组）；不存在与不在调用者范围内都答 `404`，错误信息一样：答 `403` 就等于告诉调用者这个 ID 存在 |
 | `POST /tasks/{id}/approve` | `infra.workflow.task.act` | 只认被指派人本人；回改完之后重新读出的 `TaskDetail` |
 | `POST /tasks/{id}/reject` | `infra.workflow.task.act` | 同 approve；必须带 `comment`（没有就 `400`） |
 | `GET /admin/tasks` | `infra.workflow.admin` | 只判 org，可选 `assignee_sub` |
@@ -109,9 +109,9 @@ REST，前缀 `/infra/workflow`，给人用：
 - "我的待办"（`GET /tasks`）：`assignee_sub = 我 OR assignee_dept_path LIKE 我的 dept_path || '%'`。OR 写在契约里。两个操作数都来自调用者的 `ScopeOf`；把前缀留空，它就变成全匹配，OR 就变成"人人看到全部"。
 - 管理视图（`GET /admin/tasks`）：只判 `org`，绕过 `owner`、不绕过 `org`：调用者的部门子树，不是整个租户。
 - 系统视图（gRPC `ListTasks`）：全部部门，用显式的 `AllDepts` 要。其余视图收到空的 `ScopePrefix`，仓储层一律回 `ErrInvalidArgument`：空前缀是缺值，把它当成"不限"就是 fail-open。
-- 没分部门的调用者：authz 签发的真实路径总以 `/` 开头，根部门也是，所以 `dept_path` 为空说明这个人还没被分到部门。be-sdk-go 把它变成哨兵前缀 `besdk.NoDeptPath`，任何行都不以它开头：这个人在"我的待办"里只看得到指派给自己的，管理视图里一条也没有，看别人的详情回 `403`。必须看整棵树的人，分到根部门，或者给根标记 `/`。
+- 没分部门的调用者：authz 签发的真实路径总以 `/` 开头，根部门也是，所以 `dept_path` 为空说明这个人还没被分到部门。be-sdk-go 把它变成哨兵前缀 `besdk.NoDeptPath`，任何行都不以它开头：这个人在"我的待办"里只看得到指派给自己的，管理视图里一条也没有，看别人的详情回 `404`。必须看整棵树的人，分到根部门，或者给根标记 `/`。
 - 行上的 `assignee_dept_path` 是被指派人的真实路径或空串。空串的待办不在任何部门里：只有被指派人看得到，根部门的主管也看不到。`CreateTask` 拒绝别的值，调用方误把自己的数据范围值传进来时也存不进哨兵；否则所有没分部门的人都会看到彼此的待办。
-- 真实建库的测试：别的部门里别人的待办绝不出现在"我的待办"里（`TestListTasks_我的待办用OR不是AND`、`TestListMyTasks_service层注入两维ScopeOf`）；没分部门的调用者只看得到自己的（`TestListMyTasks_无部门的人只看到指派给自己的待办`、`TestListTasksAdmin_无部门的管理员看不到任何部门的待办`、`TestGetTaskDetail_无部门的人看别人的待办是Forbidden`）；系统视图仍看得到全部（`TestListTasks_gRPC系统视图AllDepts仍看全部`）；详情在范围外回 `403`。
+- 真实建库的测试：别的部门里别人的待办绝不出现在"我的待办"里（`TestListTasks_我的待办用OR不是AND`、`TestListMyTasks_service层注入两维ScopeOf`）；没分部门的调用者只看得到自己的（`TestListMyTasks_无部门的人只看到指派给自己的待办`、`TestListTasksAdmin_无部门的管理员看不到任何部门的待办`、`TestGetTaskDetail_无部门的人看别人的待办是NotFound`）；系统视图仍看得到全部（`TestListTasks_gRPC系统视图AllDepts仍看全部`）；详情在范围外回 `404`，与不存在的 ID 无法区分（`TestGetTask_范围外404与不存在无法区分`），对别人的待办 approve / reject 仍回 `403`（`TestApprove_范围外仍是403`）。
 
 ## 参考实现
 
