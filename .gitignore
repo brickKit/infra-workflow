@@ -1,5 +1,0 @@
-build/
-*.test
-.env
-/migrate
-/server
