@@ -6,7 +6,7 @@
 //   - the role worklist to the approvers of the seeds, test.buyer.lead and test.finance.lead, and to the buyers and
 //     cashier who submit and follow: their own worklists (what they see is what the publishers made them candidates of).
 //
-// A second run changes nothing. It waits until the grants reach the component.
+// A second run changes nothing. It waits until the grants reach the component (each account's worklist answers).
 //
 //	SEED_IAM_URL (http://localhost:18200)    the identity member's development exchange
 //	SEED_AUTHZ_URL (http://localhost:18223)  the authorization member's effect point
@@ -50,8 +50,14 @@ func main() {
 		{Key: "worklist", Name: prefix + "我的待办", To: users, Segments: []sdkauthz.Segment{read}},
 	}, accounts)
 	check(err)
+	// the worklist has no write to probe: without its grant the list answers 404 (the operation is checked first), so a
+	// 200 is the grant arrived
 	for _, u := range append([]string{user}, users...) {
-		check(seed.NewClient(base, accounts[u].Token).WaitGranted("GET", "/api/workflow/tasks", time.Minute))
+		code, out, err := seed.NewClient(base, accounts[u].Token).UntilGranted(time.Minute, "GET", "/api/workflow/tasks", nil)
+		check(err)
+		if code != 200 {
+			fail("%s's worklist: %d %v", u, code, out)
+		}
 	}
 	fmt.Printf("seed infra/workflow: the worklist granted to %d accounts\n", len(users)+1)
 }

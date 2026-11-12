@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: infra/workflow
   name: Workflow
-  version: 3.0.3
+  version: 3.0.4
   description: "The unified worklist (protocol 09, D68): the task projections the deployment's chosen flow managers publish by the shared task contract (be-protocol schemas/flow/task.v1), my pending tasks and what I did, each with its own component's action entry; it keeps no decision and forwards no action"
   repository: https://github.com/brickKit/infra-workflow
 
