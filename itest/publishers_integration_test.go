@@ -36,6 +36,11 @@ func (fx *fixture) publisherCheck() {
 	other, notID := ids.New().String(), fx.projection("test/buy", "T-1", "test.buy.order.approval", "pending", 1, nil, "")
 	fx.send("test/buy", fx.projection("test/pay", other, "test.buy.order.approval", "pending", 1, nil, ""))
 	fx.send("test/buy", notID)
+	// test/pay on its own stream, writing test/buy as the envelope's source and the projection's component: the
+	// stream is test/pay's, so test/pay published it, and it is no projection of test/pay's (WF01, WF09)
+	disguised := ids.New().String()
+	fx.publishAs("test/pay", "test/buy", "test.pay_task.changed.v1", disguised, 1, events.Full,
+		fx.projection("test/buy", disguised, "test.buy.order.approval", "pending", 1, []string{sectest.Bob}, ""))
 
 	// test/old, the previous publisher of the payment approvals: a task it published before goes on; a new one is refused
 	_, err := fx.admin.Exec(fx.ctx, "INSERT INTO "+itSchema+".task (component, id, task_type, state, legal_entity_id, data, "+
@@ -45,7 +50,7 @@ func (fx *fixture) publisherCheck() {
 	fx.send("test/old", fx.projection("test/old", oldNew, "test.pay.request.approval", "pending", 1, []string{sectest.Bob}, ""))
 
 	want := map[string]string{forged: "not_the_chosen_publisher", unknown: "task_type_not_configured", bad: "malformed",
-		oldNew: "not_the_chosen_publisher", other: "malformed", "T-1": "malformed"}
+		oldNew: "not_the_chosen_publisher", other: "malformed", "T-1": "malformed", disguised: "malformed"}
 	got := map[string]string{}
 	require.Eventually(t, func() bool {
 		code, page := fx.alice.do("GET", "/api/workflow/rejected-projections?limit=200", nil)
@@ -56,12 +61,12 @@ func (fx *fixture) publisherCheck() {
 			p := x.(map[string]any)
 			got[p["task_id"].(string)] = p["reason"].(string)
 		}
-		return len(got) >= 6
+		return len(got) >= 7
 	}, 10*time.Second, 100*time.Millisecond, "the refused projections are listed")
 	for id, reason := range want {
 		assert.Equal(t, reason, got[id], id)
 	}
-	for _, id := range []string{forged, unknown, bad, oldNew} {
+	for _, id := range []string{forged, unknown, bad, oldNew, disguised} {
 		var n int
 		require.NoError(t, fx.admin.QueryRow(fx.ctx, "SELECT count(*) FROM "+itSchema+".task WHERE id = $1", id).Scan(&n))
 		assert.Zero(t, n, "a refused projection makes no task: %s", id)

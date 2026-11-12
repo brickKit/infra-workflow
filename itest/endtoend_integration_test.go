@@ -188,6 +188,13 @@ func (fx *fixture) projection(from, id, taskType, state string, version int64, c
 // the source).
 func (fx *fixture) publish(from, typ, id string, version int64, kind events.Projection, data map[string]any) {
 	fx.t.Helper()
+	fx.publishAs(from, from, typ, id, version, kind, data)
+}
+
+// publishAs puts an event on one component's stream with another's name as its envelope source: what a publisher
+// that forges its source would send (the bus only lets it publish on its own stream).
+func (fx *fixture) publishAs(from, source, typ, id string, version int64, kind events.Projection, data map[string]any) {
+	fx.t.Helper()
 	raw, err := json.Marshal(data)
 	require.NoError(fx.t, err)
 	stream := events.Stream{Name: strings.ReplaceAll(from, "/", "."), Partitions: 4}
@@ -196,7 +203,7 @@ func (fx *fixture) publish(from, typ, id string, version int64, kind events.Proj
 		Epoch: events.Epoch{Generation: 1, Timeline: 1}}
 	row.Digest = events.Digest(row.EventID, raw)
 	require.NoError(fx.t, fx.tr.Publish(fx.ctx, events.Message{Subject: events.Subject(stream.Name, row.Partition, row.Type),
-		Headers: row.Headers(from, strings.ReplaceAll(from, "/", "-")+"-it"), Data: raw}))
+		Headers: row.Headers(source, strings.ReplaceAll(from, "/", "-")+"-it"), Data: raw}))
 }
 
 // task publishes a projection on its publisher's stream and waits until the worklist holds that version.

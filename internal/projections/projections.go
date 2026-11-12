@@ -51,14 +51,16 @@ func (protocolLoader) Load(u string) (any, error) {
 }
 
 // Subs are the subscriptions the configuration makes (WF08): each named publisher's stream, its task projections and
-// heartbeats.
-func Subs(m *core.Base, handle func(*core.Base, context.Context, db.Tx, events.Received) error) []events.Sub {
+// heartbeats; the handler is told whose stream it is.
+func Subs(m *core.Base, handle func(*core.Base, string, context.Context, db.Tx, events.Received) error) []events.Sub {
 	var out []events.Sub
 	for _, c := range sources.Components(m.Sources) {
-		s := sources.Stream(c)
+		s, owner := sources.Stream(c), c
 		out = append(out, events.Sub{Name: "tasks-" + strings.ReplaceAll(s, ".", "-"), Streams: []string{s},
-			Types:  []string{s + core.TaskChangedSuffix, s + core.TaskHeartbeatSuffix},
-			Handle: func(ctx context.Context, tx db.Tx, e events.Received) error { return handle(m, ctx, tx, e) }})
+			Types: []string{s + core.TaskChangedSuffix, s + core.TaskHeartbeatSuffix},
+			Handle: func(ctx context.Context, tx db.Tx, e events.Received) error {
+				return handle(m, owner, ctx, tx, e)
+			}})
 	}
 	return out
 }
@@ -78,16 +80,21 @@ type projected struct {
 	} `json:"decision"`
 }
 
-// OnEvent takes a task projection or a heartbeat of a subscribed publisher, in the consumer's transaction.
-func OnEvent(m *core.Base, ctx context.Context, tx db.Tx, e events.Received) error {
-	from := strings.TrimPrefix(e.Source, "urn:be:")
+// OnEvent takes a task projection or a heartbeat of a subscribed publisher, in the consumer's transaction. owner is the
+// component whose stream it came on: the bus lets only its service identity publish there, so it is the publisher;
+// the envelope's source and the projection's component are what the publisher wrote, and must both name it (WF01).
+func OnEvent(m *core.Base, owner string, ctx context.Context, tx db.Tx, e events.Received) error {
+	from := owner
 	if strings.HasSuffix(e.Type, core.TaskHeartbeatSuffix) {
+		if e.Source != "urn:be:"+owner {
+			return nil // a heartbeat that names another component says nothing about this stream's owner
+		}
 		return seen(ctx, tx, from, "last_heartbeat")
 	}
 	var p projected
 	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(e.Data))
 	if err != nil || contract.Validate(doc) != nil || json.Unmarshal(e.Data, &p) != nil || p.Component != from ||
-		!uuidForm.MatchString(p.ID) {
+		e.Source != "urn:be:"+owner || !uuidForm.MatchString(p.ID) {
 		_ = json.Unmarshal(e.Data, &p)
 		id := p.ID
 		if id == "" {
