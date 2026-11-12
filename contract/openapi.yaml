@@ -1,0 +1,123 @@
+openapi: 3.1.0
+info:
+  title: infra/workflow user surface
+  version: 3.0.0
+  description: >-
+    The unified worklist (assembly protocol 09, D68): the task projections the deployment's chosen flow managers
+    publish by the shared task contract (be-protocol schemas/flow/task.v1), shown to their candidates. Every route needs
+    a platform access token and the operation in x-operation; a task the caller is not (and never was) a candidate or
+    the decider of answers 404. This component keeps no decision and forwards no action: the front end sends a
+    decision straight to the task's component (its standard route POST /be/flow/tasks/{id}/decisions, be-protocol
+    P17.14, routed by the edge to that component), and the worklist changes only when that component's next
+    projection arrives. Errors are application/problem+json with a reason. Lists page by cursor only (protocol 14).
+paths:
+  /api/workflow/tasks:
+    get:
+      operationId: listMyTasks
+      x-operation: infra.workflow.task.read
+      summary: My pending tasks (I am a current candidate), the earliest due first, then the oldest
+      parameters:
+        - {name: task_type, in: query, schema: {type: string}}
+        - {name: legal_entity_id, in: query, schema: {type: string, format: uuid}}
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks, next_cursor]
+                properties:
+                  tasks: {type: array, items: {$ref: '#/components/schemas/WorklistTask'}}
+                  next_cursor: {type: string}
+        default: {$ref: '#/components/responses/problem'}
+  /api/workflow/tasks/done:
+    get:
+      operationId: listDoneTasks
+      x-operation: infra.workflow.task.read
+      summary: Tasks I decided, and ended tasks I was a candidate of, the latest first
+      parameters:
+        - {name: task_type, in: query, schema: {type: string}}
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks, next_cursor]
+                properties:
+                  tasks: {type: array, items: {$ref: '#/components/schemas/WorklistTask'}}
+                  next_cursor: {type: string}
+        default: {$ref: '#/components/responses/problem'}
+  /api/workflow/tasks/{id}:
+    get:
+      operationId: getTask
+      x-operation: infra.workflow.task.read
+      summary: One task with its action entry and whether it may not be current (WF05, WF06)
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: component, in: query, required: true, schema: {type: string}, description: 'the flow manager (a task is its component and its ID)'}
+      responses:
+        '200': {description: the task, content: {application/json: {schema: {$ref: '#/components/schemas/WorklistTask'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/workflow/rejected-projections:
+    get:
+      operationId: listRejectedProjections
+      x-operation: infra.workflow.admin
+      summary: Projections refused by the publisher check (WF01), the latest first
+      parameters:
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projections, next_cursor]
+                properties:
+                  projections:
+                    type: array
+                    items:
+                      type: object
+                      required: [component, task_type, task_id, reason, at]
+                      properties:
+                        component: {type: string}
+                        task_type: {type: string}
+                        task_id: {type: string}
+                        reason: {enum: [task_type_not_configured, not_the_chosen_publisher, malformed]}
+                        at: {type: string, format: date-time}
+                  next_cursor: {type: string}
+        default: {$ref: '#/components/responses/problem'}
+components:
+  parameters:
+    cursor: {name: cursor, in: query, schema: {type: string}}
+    limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+  responses:
+    problem:
+      description: an error (application/problem+json with reason)
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    Problem: {type: object, required: [reason], properties: {reason: {type: string}, detail: {type: string}}}
+    WorklistTask:
+      type: object
+      required: [task, action, stale, received_at]
+      properties:
+        task: {description: 'the projection as its flow manager published it (be-protocol schemas/flow/task.v1)', type: object}
+        action:
+          type: object
+          required: [component, path]
+          description: 'where the front end sends a decision: derived from the publishing component, never from the projection'
+          properties:
+            component: {type: string}
+            path: {type: string, description: '/be/flow/tasks/{id}/decisions'}
+        stale: {type: boolean, description: 'no heartbeat and no projection from its flow manager for WORKFLOW_STALE_AFTER (WF06)'}
+        received_at: {type: string, format: date-time}
