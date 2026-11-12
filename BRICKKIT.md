@@ -10,14 +10,14 @@
 
 本组件不保存决定、不转发动作：前端把同意、拒绝直接发给任务所属的组件，待办随那个组件的下一份投影改变。审批实例、分配、决定的检查在流程管理方；`paused` 的任务（没有候选）在所属组件的异常入口。
 
-**3.0.0**（第一个重建的版本，契约 `contract/v3.0.0-alpha.1`）：我的待办、已办、读取任务、被拒的投影、发布者核对、按版本覆盖、可能不是最新、被拒投影的清理、整套恢复的核对（SDK 自带的）。
+**3.0.0**（第一个重建的版本，契约 `contract/v3.0.0-alpha.1`；3.0.3 起 alpha.2，被拒投影的操作改名为 `infra.workflow.projection.read`）：我的待办、已办、读取任务、被拒的投影、发布者核对、按版本覆盖、可能不是最新、被拒投影的清理、整套恢复的核对（SDK 自带的）。
 
 ## 部署前准备
 
 - 数据库：PostgreSQL 16 及以上；schema `infra_workflow`，属主角色 `infra_workflow_owner`（只供迁移）与运行角色 `infra_workflow_rw`（只有读写数据的权限），名字来自装配项目的注册表。三者由部署方在第一次启动前建好；表由本组件的迁移建，迁移里不建角色、不授权。
 - 消息系统（`BUS_URL`）与实现实例（`IMPLEMENTATION_INSTANCE`）：本组件不发布事件；按 `WORKFLOW_TASK_SOURCES` 订阅每个发布方的流（组件 `erp/purchase` 的流 `erp.purchase` 上的 `erp.purchase_task.changed.v1` 与 `erp.purchase_task.heartbeat.v1`）。
 - **`WORKFLOW_TASK_SOURCES`**：逗号分隔的 `<任务类型>=<发布方组件>[|<以前的发布方>…]`，例 `erp.purchase.order.approval=erp/purchase,erp.purchase.requisition.approval=erp/purchase,erp.payment.request.approval=erp/payment,erp.payment.entry.approval=erp/payment`。格式不对、一种任务类型写两次，成员不启动；不配时待办是空的。任务类型由发布方组件在它的 `BRICKKIT.md` 里列出。
-- 授权：`infra.workflow.task.read` 授予所有要用待办的人（看到哪些任务由“候选包含我”决定，本组件不判断别的组件的授权）；`infra.workflow.admin` 给排障的管理员。
+- 授权：`infra.workflow.task.read` 授予所有要用待办的人（看到哪些任务由“候选包含我”决定，本组件不判断别的组件的授权）；`infra.workflow.projection.read` 给排障的管理员。
 - 部署的服务证书（`SERVICE_TLS_*`）；身份与授权（`IAM_*`、`AUTHZ_GRPC_URL`、`DEPLOYMENT_ID`）；审计（`AUDIT_GRPC_URL`）。
 - 低到中负载：适合外壳（`be/go-infra`）。
 
@@ -44,7 +44,7 @@
 ## 契约索引
 
 - **系统面**：没有本组件自己的服务（整套恢复的核对是 SDK 的标准服务）。
-- **用户面**：`contract/openapi.yaml`。`GET /api/workflow/tasks`（我的待办）、`GET /api/workflow/tasks/done`（已办）、`GET /api/workflow/tasks/{id}?component=`（一个任务：任务是组件加身份）要 `infra.workflow.task.read`；`GET /api/workflow/rejected-projections` 要 `infra.workflow.admin`。资源没有维度。
+- **用户面**：`contract/openapi.yaml`。`GET /api/workflow/tasks`（我的待办）、`GET /api/workflow/tasks/done`（已办）、`GET /api/workflow/tasks/{id}?component=`（一个任务：任务是组件加身份）要 `infra.workflow.task.read`；`GET /api/workflow/rejected-projections` 要 `infra.workflow.projection.read`。资源没有维度。
 - **事件**：不发布。订阅的载荷是线协议的共享任务契约 `schemas/flow/task.v1` 与心跳 `task_heartbeat.v1`。`component.yaml` 的 `events.subscribes` 列出已知发布方的前缀（`erp.purchase_task.*`、`erp.payment_task.*`）；实际订阅由 `WORKFLOW_TASK_SOURCES` 决定。
 
 ## 外壳声明

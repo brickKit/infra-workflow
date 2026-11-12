@@ -68,7 +68,7 @@ paths:
   /api/workflow/rejected-projections:
     get:
       operationId: listRejectedProjections
-      x-operation: infra.workflow.admin
+      x-operation: infra.workflow.projection.read
       summary: Projections refused by the publisher check (WF01), the latest first
       parameters:
         - $ref: '#/components/parameters/cursor'

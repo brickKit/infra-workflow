@@ -27,7 +27,7 @@ const (
 	Tasks       = "infra.workflow.task"
 	OpTaskRead  = "infra.workflow.task.read" // granted to every user: the candidates bound what one sees (WF03)
 	Projections = "infra.workflow.projection"
-	OpAdmin     = "infra.workflow.admin" // the refused projections (WF01)
+	OpAdmin     = "infra.workflow.projection.read" // the refused projections (WF01): resource and action, as every key
 	System      = "infra.workflow.system"
 	// OpRecover is a full recovery's checks (be-protocol chapter 14: the recovery tool only).
 	OpRecover = "infra.workflow.system.recover"

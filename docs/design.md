@@ -57,7 +57,7 @@
 | 命令或查询 | 面 | 操作 |
 | --- | --- | --- |
 | 我的待办、已办、读取一个任务 | 用户面 | `infra.workflow.task.read`（授予给所有用户：范围由“候选包含我”限定） |
-| 被拒的投影（排障） | 用户面 | `infra.workflow.admin` |
+| 被拒的投影（排障） | 用户面 | `infra.workflow.projection.read` |
 | 整套恢复的核对 | 系统面 | `infra.workflow.system.recover` |
 
 ## 事件
@@ -73,6 +73,8 @@
 | `infra/notification` | 否（以后） | 提醒由流程管理方发，本组件不发 | — |
 
 ## 实现状态
+
+3.0.3：{version}：被拒投影的操作改名为 `infra.workflow.projection.read`（契约 `contract/v3.0.0-alpha.2`）：原来的 `infra.workflow.admin` 不是“资源 + 动作”，套件按约定推不出它的资源；还没有部署或授予用过它（装配项目阶段计划 C7 的 P7）。
 
 3.0.2：{version}：be-sdk-go alpha.126（全系统同一个 SDK 版本；流程内核在员工投影变化后立即重新解析暂停的任务）；“收到的时刻”写明是收下这一版投影的时刻（一致性考试）；本组件行为不变。
 

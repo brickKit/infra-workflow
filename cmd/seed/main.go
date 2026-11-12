@@ -46,7 +46,7 @@ func main() {
 	read := segment("infra.workflow.task", "infra.workflow.task.read")
 	_, err = a.GrantRoles([]seed.RoleSpec{
 		{Key: "maintain", Name: prefix + "待办维护", To: []string{user},
-			Segments: []sdkauthz.Segment{read, segment("infra.workflow.projection", "infra.workflow.admin")}},
+			Segments: []sdkauthz.Segment{read, segment("infra.workflow.projection", "infra.workflow.projection.read")}},
 		{Key: "worklist", Name: prefix + "我的待办", To: users, Segments: []sdkauthz.Segment{read}},
 	}, accounts)
 	check(err)
