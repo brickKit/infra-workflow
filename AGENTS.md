@@ -12,6 +12,7 @@
 | [`internal/`](internal/AGENTS.md) | 业务：下面的模块各一个包；模块之间的依赖表在它的 `AGENTS.md` |
 | [`itest/`](itest/AGENTS.md) | 集成测试，按业务流程分文件；它的 `AGENTS.md` 是测试索引 |
 | `workflow/migrations/` | 表：任务、候选、发布方、被拒的投影 |
+| `cmd/seed/` | 种子（`make seed`）：角色“待办维护”给种子用户，“我的待办”给采购与财务的审批人、采购员与出纳；任务本身来自发布方的种子 |
 | `contract/` | 本组件发布的契约：`contract/openapi.yaml`（没有事件、没有 proto） |
 | `docs/design.md` | 设计（WF01–WF09） |
 
