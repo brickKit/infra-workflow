@@ -1,0 +1,177 @@
+apiVersion: brickkit/v1
+kind: Component
+
+metadata:
+  id: infra/workflow
+  name: Workflow
+  version: 3.0.0
+  description: "The unified worklist (protocol 09, D68): the task projections the deployment's chosen flow managers publish by the shared task contract (be-protocol schemas/flow/task.v1), my pending tasks and what I did, each with its own component's action entry; it keeps no decision and forwards no action"
+  repository: https://github.com/brickKit/infra-workflow
+
+events:
+  subscribes:
+    - erp.payment_task.*
+    - erp.purchase_task.*
+
+deployment:
+  type: container
+  build:
+    context: .
+    dockerfile: Dockerfile
+  port: 8201
+  extraPorts:
+    - name: grpc
+      port: 9201
+      protocol: grpc
+
+healthCheck:
+  type: http
+  path: /healthz
+
+readinessCheck:
+  type: http
+  path: /readyz
+
+migration:
+  command: ["/infra-workflow", "migrate"]
+
+local:
+  runCommand: [go, run, .]
+  migrationCommand: [go, run, ., migrate]
+
+configSchema:
+  properties:
+    AUDIT_GRPC_URL:
+      description: 'process-level: the same for every member of a shell'
+      type: string
+    AUTHZ_GRPC_URL:
+      description: 'process-level: the same for every member of a shell'
+      type: string
+    BUS_SUBSCRIPTION_CONCURRENCY:
+      type: integer
+    BUS_URL:
+      description: 'process-level: the same for every member of a shell'
+      secret: true
+      type: string
+    DEPLOYMENT_ID:
+      description: 'process-level: the same for every member of a shell'
+      type: string
+    IAM_ISSUER:
+      description: 'process-level: the same for every member of a shell'
+      type: string
+    IAM_JWKS_URL:
+      description: 'process-level: the same for every member of a shell'
+      type: string
+    LOG_LEVEL:
+      description: SDK default info
+      enum:
+        - debug
+        - info
+        - warn
+        - error
+      type: string
+    OBJECT_STORE_ACCESS_KEY:
+      type: string
+    OBJECT_STORE_BUCKET:
+      type: string
+    OBJECT_STORE_PREFIX:
+      type: string
+    OBJECT_STORE_REGION:
+      description: SDK default us-east-1
+      type: string
+    OBJECT_STORE_SECRET_KEY:
+      secret: true
+      type: string
+    OBJECT_STORE_URL:
+      type: string
+    OTEL_URL:
+      description: 'process-level: the same for every member of a shell'
+      type: string
+    PG_DATABASE:
+      type: string
+    PG_HOST:
+      type: string
+    PG_IDLE_IN_TX_TIMEOUT:
+      description: a duration (e.g. 2s, 500ms); SDK default 10s
+      type: string
+    PG_LOCK_TIMEOUT:
+      description: a duration (e.g. 2s, 500ms); SDK default 2s
+      type: string
+    PG_MIGRATION_HOST:
+      type: string
+    PG_MIGRATION_PORT:
+      type: integer
+    PG_OWNER_PASSWORD:
+      secret: true
+      type: string
+    PG_OWNER_USER:
+      type: string
+    PG_PASSWORD:
+      secret: true
+      type: string
+    PG_POOL_BACKGROUND:
+      description: SDK default 4
+      type: integer
+    PG_POOL_FOREGROUND:
+      description: SDK default 8
+      type: integer
+    PG_POOLER_PREPARED:
+      description: SDK default true
+      type: boolean
+    PG_PORT:
+      description: SDK default 5432
+      type: integer
+    PG_SCHEMA:
+      type: string
+    PG_STATEMENT_TIMEOUT:
+      description: a duration (e.g. 2s, 500ms); SDK default 5s
+      type: string
+    PG_USER:
+      type: string
+    RECOVERY_PHASE:
+      description: 'process-level: the same for every member of a shell'
+      enum:
+        - frozen
+        - redelivering
+        - replaying
+        - verifying
+        - read_only
+      type: string
+    SERVICE_TLS_CA_FILE:
+      description: a file path, re-read on rotation
+      mount: file
+      secret: true
+      type: string
+    SERVICE_TLS_CERT_FILE:
+      description: a file path, re-read on rotation
+      mount: file
+      secret: true
+      type: string
+    SERVICE_TLS_KEY_FILE:
+      description: a file path, re-read on rotation
+      mount: file
+      secret: true
+      type: string
+    STOP_DRAIN_DELAY:
+      description: a duration (e.g. 2s, 500ms); SDK default 2s
+      type: string
+    STOP_TIMEOUT:
+      description: a duration (e.g. 2s, 500ms); SDK default 30s
+      type: string
+    WORKFLOW_STALE_AFTER:
+      description: 'a duration (e.g. 15m): how long without a heartbeat or a projection a publisher''s tasks may not be current; unset: 15m; a duration (e.g. 2s, 500ms); SDK default 900s'
+      type: string
+    WORKFLOW_TASK_SOURCES:
+      description: 'the chosen publisher of each task type, and its previous ones: <task type>=<component>[|<previous component>...], comma separated (e.g. erp.purchase.order.approval=erp/purchase); unset: no task type'
+      type: string
+  required:
+    - BUS_URL
+    - PG_DATABASE
+    - PG_HOST
+    - PG_PASSWORD
+    - PG_SCHEMA
+    - PG_USER
+  type: object
+
+release:
+  goModule: true
