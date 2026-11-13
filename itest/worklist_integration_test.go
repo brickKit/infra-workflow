@@ -53,7 +53,7 @@ func (fx *fixture) worklist() {
 	// WF05: one task with its action entry; who was never a candidate gets 404
 	code, one := fx.bob.do("GET", "/api/workflow/tasks/"+t1+"?component=test/buy", nil)
 	require.Equal(t, 200, code, one)
-	assert.Equal(t, map[string]any{"component": "test/buy", "path": "/be/flow/tasks/" + t1 + "/decisions"}, one["action"])
+	assert.Equal(t, map[string]any{"component": "test/buy", "path": "/api/buy/flow/tasks/" + t1 + "/decisions"}, one["action"])
 	assert.Equal(t, false, one["stale"])
 	assert.Equal(t, "test.buy.order.approval", at(one, "task", "task_type"))
 	code, out := fx.carol.do("GET", "/api/workflow/tasks/"+t1+"?component=test/buy", nil)

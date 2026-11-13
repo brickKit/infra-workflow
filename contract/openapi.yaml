@@ -7,7 +7,7 @@ info:
     publish by the shared task contract (be-protocol schemas/flow/task.v1), shown to their candidates. Every route needs
     a platform access token and the operation in x-operation; a task the caller is not (and never was) a candidate or
     the decider of answers 404. This component keeps no decision and forwards no action: the front end sends a
-    decision straight to the task's component (its standard route POST /be/flow/tasks/{id}/decisions, be-protocol
+    decision straight to the task's component (its standard route POST /api/<name>/flow/tasks/{id}/decisions under its public prefix, be-protocol
     P17.14, routed by the edge to that component), and the worklist changes only when that component's next
     projection arrives. Errors are application/problem+json with a reason. Lists page by cursor only (protocol 14).
 paths:
@@ -118,6 +118,6 @@ components:
           description: 'where the front end sends a decision: derived from the publishing component, never from the projection'
           properties:
             component: {type: string}
-            path: {type: string, description: '/be/flow/tasks/{id}/decisions'}
+            path: {type: string, description: '/api/<name>/flow/tasks/{id}/decisions (the component''s public prefix, be-protocol P11.11)'}
         stale: {type: boolean, description: 'no heartbeat and no projection from its flow manager for WORKFLOW_STALE_AFTER (WF06)'}
         received_at: {type: string, format: date-time}

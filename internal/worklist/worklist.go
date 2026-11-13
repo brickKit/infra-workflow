@@ -6,6 +6,7 @@ package worklist
 import (
 	"context"
 	"encoding/json"
+	"github.com/brickKit/be-sdk-go/v3/flow"
 	"strconv"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ func scan(rows pgx.Rows) (Task, error) {
 	var at time.Time
 	err := rows.Scan(&t.Task, &t.component, &t.id, &at, &t.Stale)
 	t.ReceivedAt = at.UTC().Format(time.RFC3339Nano)
-	t.Action = Action{Component: t.component, Path: "/be/flow/tasks/" + t.id + "/decisions"}
+	t.Action = Action{Component: t.component, Path: flow.DecisionPath(t.component, t.id)}
 	return t, err
 }
 
@@ -68,7 +69,7 @@ func page(m *core.Base, ctx context.Context, q string, args []any, limit int) ([
 				return err
 			}
 			t.ReceivedAt = at.UTC().Format(time.RFC3339Nano)
-			t.Action = Action{Component: t.component, Path: "/be/flow/tasks/" + t.id + "/decisions"}
+			t.Action = Action{Component: t.component, Path: flow.DecisionPath(t.component, t.id)}
 			out = append(out, t)
 		}
 		return rows.Err()
