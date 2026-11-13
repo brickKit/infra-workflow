@@ -161,8 +161,8 @@ func reject(m *core.Base, ctx context.Context, tx db.Tx, from, taskType, taskID,
 		return nil
 	}
 	_, err := m.RT.Audit.Write(ctx, tx, audit.Record{Category: audit.SecurityDenial, Operation: core.OpAdmin,
-		Outcome: audit.Denied, Actor: from, Reason: reason, Target: audit.TargetOf(core.Projections, taskID,
-			map[string]any{"task_type": taskType})})
+		Outcome: audit.Denied, Actor: from, Reason: reason, Target: audit.TargetOf(core.Projections, taskID, nil),
+		Changes: map[string]any{"task_type": taskType}})
 	return err
 }
 
